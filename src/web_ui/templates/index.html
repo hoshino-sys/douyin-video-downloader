@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DouK-Downloader WebUI</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Vue 3 -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <!-- Element Plus -->
+    <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
+    <script src="https://unpkg.com/element-plus"></script>
+    <!-- Icons -->
+    <script src="https://unpkg.com/@element-plus/icons-vue"></script>
+    <style>
+        body { font-family: 'Inter', 'Helvetica Neue', Helvetica, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', '微软雅黑', Arial, sans-serif; background-color: #f3f4f6; }
+        .el-header { background-color: #fff; border-bottom: 1px solid #e5e7eb; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
+        .logo { font-size: 1.5rem; font-weight: bold; color: #409EFF; display: flex; align-items: center; gap: 10px; }
+        .main-content { padding: 20px; max-width: 1200px; margin: 0 auto; }
+        .card-header { display: flex; justify-content: space-between; align-items: center; }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <el-container class="h-screen">
+            <el-header height="60px">
+                <div class="logo">
+                    <el-icon><Download /></el-icon>
+                    DouK-Downloader
+                </div>
+                <el-menu mode="horizontal" :router="false" :default-active="activeTab" @select="handleSelect">
+                    <el-menu-item index="home">首页</el-menu-item>
+                    <el-menu-item index="download">作品下载</el-menu-item>
+                    <el-menu-item index="batch">批量/账号</el-menu-item>
+                    <el-menu-item index="settings">设置</el-menu-item>
+                </el-menu>
+            </el-header>
+
+            <el-main>
+                <div class="main-content">
+                    
+                    <!-- 首页 -->
+                    <div v-if="activeTab === 'home'" class="space-y-6">
+                        <el-alert title="欢迎使用 DouK-Downloader WebUI" type="success" :closable="false" show-icon>
+                            本项目完全开源，免费使用。请遵守相关法律法规，仅供学习交流。
+                        </el-alert>
+                        
+                        <el-row :gutter="20">
+                            <el-col :span="8">
+                                <el-card shadow="hover">
+                                    <template #header>
+                                        <div class="card-header"><span>项目状态</span></div>
+                                    </template>
+                                    <div class="text-gray-600">
+                                        <p>版本: {{ version }}</p>
+                                        <p>运行状态: 正常</p>
+                                        <p>API 状态: <el-tag type="success" size="small">在线</el-tag></p>
+                                    </div>
+                                </el-card>
+                            </el-col>
+                            <el-col :span="16">
+                                <el-card shadow="hover">
+                                    <template #header>
+                                        <div class="card-header"><span>快速开始</span></div>
+                                    </template>
+                                    <p class="mb-4">选择上方菜单栏的“作品下载”开始下载单个视频，或选择“批量/账号”下载整个主页。</p>
+                                    <el-button type="primary" @click="activeTab = 'download'">去下载视频</el-button>
+                                </el-card>
+                            </el-col>
+                        </el-row>
+                    </div>
+
+                    <!-- 单作品下载 -->
+                    <div v-if="activeTab === 'download'" class="space-y-6">
+                        <el-card>
+                            <template #header>
+                                <div class="card-header">
+                                    <span>单个作品解析与下载</span>
+                                    <el-radio-group v-model="platform" size="small">
+                                        <el-radio-button label="douyin">抖音</el-radio-button>
+                                        <el-radio-button label="tiktok">TikTok</el-radio-button>
+                                    </el-radio-group>
+                                </div>
+                            </template>
+                            
+                            <el-form :inline="true" class="flex w-full gap-4">
+                                <el-input v-model="inputUrl" placeholder="请输入作品链接或 ID" class="flex-1" clearable></el-input>
+                                <el-button type="primary" @click="parseDetail" :loading="loading">解析</el-button>
+                            </el-form>
+                        </el-card>
+
+                        <div v-if="detailData" class="transition-all duration-300">
+                            <el-card>
+                                <div class="flex flex-col md:flex-row gap-6">
+                                    <div class="w-full md:w-1/3 max-w-[300px]">
+                                        <el-image :src="getPreviewImage(detailData)" fit="cover" class="rounded-lg shadow-md w-full"></el-image>
+                                    </div>
+                                    <div class="flex-1 space-y-3">
+                                        <h3 class="text-lg font-bold">{{ detailData.desc || '无标题' }}</h3>
+                                        <div class="flex items-center gap-2 text-sm text-gray-500">
+                                            <el-avatar :size="24" :src="detailData.author?.avatar_thumb?.url_list?.[0]"></el-avatar>
+                                            <span>{{ detailData.author?.nickname }}</span>
+                                        </div>
+                                        <div class="grid grid-cols-2 gap-4 text-sm bg-gray-50 p-4 rounded">
+                                            <div>ID: {{ detailData.aweme_id }}</div>
+                                            <div>类型: {{ getWorkType(detailData) }}</div>
+                                            <div>点赞: {{ detailData.statistics?.digg_count }}</div>
+                                            <div>评论: {{ detailData.statistics?.comment_count }}</div>
+                                        </div>
+                                        <div class="pt-4">
+                                            <el-button type="success" size="large" @click="downloadDetail" :loading="downloading">
+                                                <el-icon class="mr-2"><Download /></el-icon>下载此作品
+                                            </el-button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </el-card>
+                        </div>
+                    </div>
+
+                    <!-- 批量/账号下载 -->
+                    <div v-if="activeTab === 'batch'" class="space-y-6">
+                        <el-card>
+                            <template #header>
+                                <div class="card-header">
+                                    <span>批量/账号下载</span>
+                                    <el-radio-group v-model="batchType" size="small">
+                                        <el-radio-button label="account">账号主页</el-radio-button>
+                                        <el-radio-button label="mix">合集</el-radio-button>
+                                        <!-- <el-radio-button label="fav">喜欢/收藏</el-radio-button> -->
+                                    </el-radio-group>
+                                </div>
+                            </template>
+
+                            <el-form label-width="100px">
+                                <el-form-item label="平台">
+                                    <el-radio-group v-model="platform">
+                                        <el-radio label="douyin">抖音</el-radio>
+                                        <el-radio label="tiktok">TikTok</el-radio>
+                                    </el-radio-group>
+                                </el-form-item>
+                                
+                                <el-form-item :label="batchType === 'account' ? 'SecUID' : 'ID/链接'">
+                                    <el-input v-model="batchInput" :placeholder="batchType === 'account' ? '请输入用户的 SecUserID' : '请输入合集 ID 或链接'"></el-input>
+                                    <div class="text-xs text-gray-400 mt-1" v-if="batchType === 'account'">注：需要输入用户的 sec_user_id，不是显示的抖音号。</div>
+                                </el-form-item>
+
+                                <el-form-item label="下载范围" v-if="batchType === 'account'">
+                                    <el-radio-group v-model="accountTab">
+                                        <el-radio label="post">发布作品</el-radio>
+                                        <el-radio label="favorite">喜欢作品</el-radio>
+                                        <el-radio label="collection">收藏作品</el-radio>
+                                    </el-radio-group>
+                                </el-form-item>
+
+                                <el-form-item label="时间范围" v-if="batchType === 'account'">
+                                    <el-date-picker
+                                        v-model="dateRange"
+                                        type="daterange"
+                                        range-separator="至"
+                                        start-placeholder="最早日期"
+                                        end-placeholder="最晚日期"
+                                        value-format="YYYY-MM-DD"
+                                    />
+                                </el-form-item>
+
+                                <el-form-item>
+                                    <el-button type="primary" @click="startBatchDownload" :loading="downloading">开始批量下载</el-button>
+                                </el-form-item>
+                            </el-form>
+                        </el-card>
+                        
+                        <div v-if="batchLog.length > 0" class="mt-4">
+                            <el-card>
+                                <template #header><span>操作日志</span></template>
+                                <div class="bg-gray-900 text-green-400 p-4 rounded h-64 overflow-y-auto font-mono text-sm">
+                                    <div v-for="(log, index) in batchLog" :key="index">> {{ log }}</div>
+                                </div>
+                            </el-card>
+                        </div>
+                    </div>
+
+                    <!-- 设置 -->
+                    <div v-if="activeTab === 'settings'" class="space-y-6">
+                        <el-card>
+                            <template #header>
+                                <div class="card-header">
+                                    <span>全局设置</span>
+                                    <el-button type="primary" @click="saveSettings" :loading="saving">保存配置</el-button>
+                                </div>
+                            </template>
+                            
+                            <el-form v-if="settings" label-width="140px" label-position="left">
+                                <el-tabs>
+                                    <el-tab-pane label="下载设置">
+                                        <el-form-item label="下载目录">
+                                            <el-input v-model="settings.root"></el-input>
+                                        </el-form-item>
+                                        <el-form-item label="文件夹名称格式">
+                                            <el-input v-model="settings.folder_name"></el-input>
+                                        </el-form-item>
+                                        <el-form-item label="文件名称格式">
+                                            <el-input v-model="settings.name_format"></el-input>
+                                        </el-form-item>
+                                        <el-form-item label="文件大小上限 (MB)">
+                                            <el-input-number v-model="settings.max_size" :min="0"></el-input-number>
+                                        </el-form-item>
+                                        <el-form-item label="下载间隔 (秒)">
+                                            <el-input-number v-model="settings.timeout" :min="0"></el-input-number>
+                                        </el-form-item>
+                                    </el-tab-pane>
+                                    
+                                    <el-tab-pane label="Cookie 设置">
+                                        <el-form-item label="抖音 Cookie">
+                                            <el-input type="textarea" v-model="settings.cookie" rows="3"></el-input>
+                                        </el-form-item>
+                                        <el-form-item label="TikTok Cookie">
+                                            <el-input type="textarea" v-model="settings.cookie_tiktok" rows="3"></el-input>
+                                        </el-form-item>
+                                    </el-tab-pane>
+
+                                    <el-tab-pane label="其他">
+                                        <el-form-item label="代理地址">
+                                            <el-input v-model="settings.proxy" placeholder="http://127.0.0.1:7890"></el-input>
+                                        </el-form-item>
+                                        <el-form-item label="下载动态封面">
+                                            <el-switch v-model="settings.dynamic_cover"></el-switch>
+                                        </el-form-item>
+                                         <el-form-item label="下载原始封面">
+                                            <el-switch v-model="settings.original_cover"></el-switch>
+                                        </el-form-item>
+                                    </el-tab-pane>
+                                </el-tabs>
+                            </el-form>
+                        </el-card>
+                    </div>
+
+                </div>
+            </el-main>
+        </el-container>
+    </div>
+
+    <script>
+        const { createApp, ref, reactive, onMounted } = Vue;
+        const { ElMessage } = ElementPlus;
+
+        const app = createApp({
+            setup() {
+                const activeTab = ref('home');
+                const version = ref('2.0.0'); // 示例
+                const platform = ref('douyin');
+                const inputUrl = ref('');
+                const loading = ref(false);
+                const downloading = ref(false);
+                const detailData = ref(null);
+                
+                // 批量相关
+                const batchType = ref('account');
+                const batchInput = ref('');
+                const accountTab = ref('post');
+                const dateRange = ref([]);
+                const batchLog = ref([]);
+
+                // 设置相关
+                const settings = ref(null);
+                const saving = ref(false);
+
+                const handleSelect = (key) => {
+                    activeTab.value = key;
+                    if (key === 'settings') {
+                        loadSettings();
+                    }
+                };
+
+                // 解析作品
+                const parseDetail = async () => {
+                    if (!inputUrl.value) return ElMessage.warning('请输入链接或 ID');
+                    loading.value = true;
+                    detailData.value = null;
+                    
+                    try {
+                        const isDouyin = platform.value === 'douyin';
+                        let id = inputUrl.value;
+                        
+                        // 如果是链接，先调用 /share 获取重定向后的链接
+                        if (inputUrl.value.includes('http')) {
+                            const shareEndpoint = isDouyin ? '/douyin/share' : '/tiktok/share';
+                            const res = await fetch(shareEndpoint, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ text: inputUrl.value })
+                            });
+                            const data = await res.json();
+                            if (data.url) {
+                                // 尝试从 URL 提取 ID
+                                const match = data.url.match(/video\/(\d+)/);
+                                if (match) {
+                                    id = match[1];
+                                } else {
+                                    const match2 = data.url.match(/modal_id=(\d+)/);
+                                    if (match2) {
+                                        id = match2[1];
+                                    } else {
+                                        // TikTok photo mode?
+                                        const match3 = data.url.match(/photo\/(\d+)/);
+                                        if (match3) {
+                                            id = match3[1];
+                                        }
+                                        // 还有一种可能是 note_id (抖音图文)
+                                        const match4 = data.url.match(/note\/(\d+)/);
+                                        if (match4) {
+                                            id = match4[1];
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        const endpoint = isDouyin ? '/douyin/detail' : '/tiktok/detail';
+                        const body = { detail_id: id };
+                        
+                        const res = await fetch(endpoint, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(body)
+                        });
+                        const data = await res.json();
+                        if (data.data) {
+                            detailData.value = data.data;
+                            ElMessage.success('解析成功');
+                        } else {
+                            ElMessage.error(data.message || '解析失败');
+                        }
+                    } catch (e) {
+                        ElMessage.error('请求出错: ' + e.message);
+                    } finally {
+                        loading.value = false;
+                    }
+                };
+
+                const getPreviewImage = (data) => {
+                    if (data.video && data.video.cover && data.video.cover.url_list) {
+                        return data.video.cover.url_list[0];
+                    }
+                    if (data.images && data.images.length > 0) {
+                        return data.images[0].url_list[0];
+                    }
+                    return '';
+                };
+
+                const getWorkType = (data) => {
+                    if (data.images) return '图集';
+                    return '视频';
+                };
+
+                // 下载单个作品
+                const downloadDetail = async () => {
+                    if (!detailData.value) return;
+                    downloading.value = true;
+                    try {
+                        const res = await fetch('/api/download', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                type: 'detail',
+                                platform: platform.value,
+                                data: detailData.value
+                            })
+                        });
+                        const data = await res.json();
+                        if (data.status === 'success') {
+                            ElMessage.success('已添加到下载队列');
+                        } else {
+                            ElMessage.error('下载请求失败');
+                        }
+                    } catch (e) {
+                        ElMessage.error('网络错误');
+                    } finally {
+                        downloading.value = false;
+                    }
+                };
+
+                // 批量下载
+                const startBatchDownload = async () => {
+                    if (!batchInput.value) return ElMessage.warning('请输入内容');
+                    downloading.value = true;
+                    batchLog.value.push(`[${new Date().toLocaleTimeString()}] 开始请求任务...`);
+                    
+                    try {
+                        const payload = {
+                            type: batchType.value, // account, mix
+                            platform: platform.value,
+                            id: batchInput.value,
+                            tab: accountTab.value,
+                            earliest: dateRange.value ? dateRange.value[0] : '',
+                            latest: dateRange.value ? dateRange.value[1] : ''
+                        };
+
+                        const res = await fetch('/api/download', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        const data = await res.json();
+                        if (data.status === 'success') {
+                            batchLog.value.push(`[${new Date().toLocaleTimeString()}] 任务已启动，请查看后台日志或等待完成。`);
+                            ElMessage.success('任务已启动');
+                        } else {
+                            batchLog.value.push(`[${new Date().toLocaleTimeString()}] 任务启动失败: ${data.message}`);
+                            ElMessage.error(data.message || '启动失败');
+                        }
+                    } catch (e) {
+                        batchLog.value.push(`[${new Date().toLocaleTimeString()}] 错误: ${e.message}`);
+                    } finally {
+                        downloading.value = false;
+                    }
+                };
+
+                // 加载设置
+                const loadSettings = async () => {
+                    try {
+                        const res = await fetch('/settings');
+                        const data = await res.json();
+                        settings.value = data;
+                    } catch (e) {
+                        ElMessage.error('加载设置失败');
+                    }
+                };
+
+                // 保存设置
+                const saveSettings = async () => {
+                    if (!settings.value) return;
+                    saving.value = true;
+                    try {
+                        const res = await fetch('/settings', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(settings.value)
+                        });
+                        if (res.ok) {
+                            ElMessage.success('设置已保存');
+                        } else {
+                            ElMessage.error('保存失败');
+                        }
+                    } catch (e) {
+                        ElMessage.error('网络错误');
+                    } finally {
+                        saving.value = false;
+                    }
+                };
+
+                return {
+                    activeTab,
+                    version,
+                    platform,
+                    inputUrl,
+                    loading,
+                    downloading,
+                    detailData,
+                    batchType,
+                    batchInput,
+                    accountTab,
+                    dateRange,
+                    batchLog,
+                    settings,
+                    saving,
+                    handleSelect,
+                    parseDetail,
+                    getPreviewImage,
+                    getWorkType,
+                    downloadDetail,
+                    startBatchDownload,
+                    saveSettings,
+                    Download: ElementPlusIconsVue.Download
+                };
+            }
+        });
+        
+        for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
+            app.component(key, component);
+        }
+        app.use(ElementPlus);
+        app.mount('#app');
+    </script>
+</body>
+</html>

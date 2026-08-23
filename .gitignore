@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+/.venv/
+/.ruff_cache/
+/.idea/
+/.run/
+/Volume/
+!/.github/
+1.py
+.dart_tool/
+/build/
+gui/__pycache__/
+gui/flutter_app/build/
+gui/flutter_app/.dart_tool/
