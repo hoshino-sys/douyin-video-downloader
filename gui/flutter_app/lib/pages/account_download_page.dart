@@ -1,6 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../app.dart';
+import '../services/toast.dart';
+import '../widgets/save_to_chip.dart';
+
+void _toast(BuildContext context, String message, {String? actionLabel, VoidCallback? onAction}) {
+  AppToast.show(context, message, actionLabel: actionLabel, onAction: onAction);
+}
 
 class AccountDownloadPage extends StatefulWidget {
   final VoidCallback? onGoTasks;
@@ -11,18 +18,23 @@ class AccountDownloadPage extends StatefulWidget {
 }
 
 class _AccountDownloadPageState extends State<AccountDownloadPage> {
-  bool _tiktok = false;
   final _inputController = TextEditingController();
+  final _focusNode = FocusNode();
   String _tab = 'post';
   DateTime? _earliest;
   DateTime? _latest;
   bool _submitting = false;
+  String? _saveDir;
 
   @override
   void dispose() {
     _inputController.dispose();
+    _focusNode.dispose();
     super.dispose();
   }
+
+  bool _isTiktokInput(String input) =>
+      input.toLowerCase().contains('tiktok.com');
 
   String? _extractSecUserId(String input) {
     for (final pattern in [
@@ -38,34 +50,73 @@ class _AccountDownloadPageState extends State<AccountDownloadPage> {
   }
 
   Future<void> _submit() async {
-    final secUserId = _extractSecUserId(_inputController.text);
+    final text = _inputController.text.trim();
+    if (text.isNotEmpty) {
+      final detected = text.toLowerCase().contains('tiktok.com')
+          ? 'tiktok'
+          : (text.contains('douyin.com') ||
+                  text.contains('iesdouyin') ||
+                  RegExp(r'^[a-zA-Z0-9_-]{20,}$').hasMatch(text)
+              ? 'douyin'
+              : null);
+      if (detected == null) {
+        _toast(context, 'B站/YouTube 批量下载请使用「链接下载」页粘贴空间或频道链接');
+        return;
+      }
+    }
+    final secUserId = _extractSecUserId(text);
     if (secUserId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('无法识别账号链接，请输入账号主页链接或 sec_user_id'),
-      ));
+      _toast(context, '无法识别账号链接，请输入账号主页链接或 sec_user_id');
       return;
     }
     setState(() => _submitting = true);
     try {
       await App.client!.createAccountTask(
-        tiktok: _tiktok,
+        tiktok: _isTiktokInput(text),
         secUserId: secUserId,
         tab: _tab,
         earliest: _earliest == null ? '' : _formatDate(_earliest!),
         latest: _latest == null ? '' : _formatDate(_latest!),
+        saveDir: _saveDir,
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: const Text('任务已创建，正在后台下载…'),
-        action: widget.onGoTasks == null ? null : SnackBarAction(label: '查看任务', onPressed: widget.onGoTasks!),
-      ));
+      _toast(
+        context,
+        '任务已创建，正在后台下载…',
+        actionLabel: widget.onGoTasks == null ? null : '查看任务',
+        onAction: widget.onGoTasks,
+      );
       _inputController.clear();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(e.toString())));
+      _toast(context, e.toString());
     } finally {
       if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  Future<void> _pickSaveDir() async {
+    final path = await App.showFolderPicker();
+    if (path == null || !mounted) return;
+    setState(() => _saveDir = path);
+    _toast(context, '本次下载将保存到：$path');
+  }
+
+  Future<void> _pasteFromClipboard() async {
+    try {
+      final data = await Clipboard.getData(Clipboard.kTextPlain);
+      String? text = data?.text;
+      text ??= (await Clipboard.getData('text/plain'))?.text;
+      if (text == null || text.trim().isEmpty) {
+        if (mounted) _toast(context, '剪贴板为空');
+        return;
+      }
+      final trimmed = text.trim();
+      setState(() => _inputController.text = trimmed);
+      _focusNode.requestFocus();
+      if (mounted) _toast(context, '已粘贴 ${trimmed.length} 字符');
+    } catch (e) {
+      if (mounted) _toast(context, '粘贴失败：$e');
     }
   }
 
@@ -101,23 +152,31 @@ class _AccountDownloadPageState extends State<AccountDownloadPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              SegmentedButton<bool>(
-                segments: const [
-                  ButtonSegment(value: false, label: Text('抖音')),
-                  ButtonSegment(value: true, label: Text('TikTok')),
-                ],
-                selected: {_tiktok},
-                onSelectionChanged: (s) => setState(() => _tiktok = s.first),
-              ),
+              Text('自动识别抖音 / TikTok 账号链接；B站/YouTube 批量下载请使用「链接下载」页粘贴空间或频道链接',
+                  style: Theme.of(context).textTheme.bodySmall),
               const SizedBox(height: 16),
-              TextField(
-                controller: _inputController,
-                decoration: const InputDecoration(
-                  border: OutlineInputBorder(),
-                  labelText: '账号主页链接 / sec_user_id',
-                  hintText: '例如：https://www.douyin.com/user/MS4wLjABAAAA…',
+              CallbackShortcuts(
+                bindings: {
+                  const SingleActivator(LogicalKeyboardKey.keyV, control: true): _pasteFromClipboard,
+                  const SingleActivator(LogicalKeyboardKey.keyV, meta: true): _pasteFromClipboard,
+                  const SingleActivator(LogicalKeyboardKey.insert, shift: true): _pasteFromClipboard,
+                },
+                child: TextField(
+                  controller: _inputController,
+                  focusNode: _focusNode,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    labelText: '账号主页链接 / sec_user_id',
+                    hintText: '支持抖音与 TikTok 账号主页链接，自动识别平台',
+                  ),
                 ),
               ),
+              const SizedBox(height: 8),
+              Wrap(spacing: 8, runSpacing: 8, children: [
+                FilledButton.tonalIcon(icon: const Icon(Icons.content_paste, size: 18), label: const Text('粘贴'), onPressed: _pasteFromClipboard),
+                OutlinedButton.icon(icon: const Icon(Icons.clear, size: 18), label: const Text('清空'), onPressed: () => setState(() => _inputController.clear())),
+                SaveToChip(saveDir: _saveDir, onPick: _pickSaveDir, onClear: () => setState(() => _saveDir = null)),
+              ]),
               const SizedBox(height: 16),
               Row(
                 children: [

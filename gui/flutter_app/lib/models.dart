@@ -49,6 +49,70 @@ class CookieResult {
       );
 }
 
+class PlatformCookieResult {
+  final bool success;
+  final bool loggedIn;
+  final String message;
+
+  const PlatformCookieResult({
+    required this.success,
+    required this.loggedIn,
+    required this.message,
+  });
+
+  static PlatformCookieResult fromJson(Map<String, dynamic> json) =>
+      PlatformCookieResult(
+        success: json['success'] as bool? ?? false,
+        loggedIn: json['logged_in'] as bool? ?? false,
+        message: json['message']?.toString() ?? '',
+      );
+}
+
+class CookieAllResult {
+  final bool success;
+  final Map<String, PlatformCookieResult> results;
+
+  const CookieAllResult({
+    required this.success,
+    required this.results,
+  });
+
+  static const Map<String, String> labels = {
+    'douyin': '抖音',
+    'tiktok': 'TikTok',
+    'bili': 'B站',
+    'youtube': 'YouTube',
+  };
+
+  String summary() {
+    final parts = <String>[];
+    for (final entry in labels.entries) {
+      final r = results[entry.key];
+      if (r == null) continue;
+      final mark = r.success ? (r.loggedIn ? '✓' : '✓未登录') : '✗';
+      parts.add('${entry.value}$mark');
+    }
+    return parts.join('  ');
+  }
+
+  static CookieAllResult fromJson(Map<String, dynamic> json) {
+    final raw = json['results'];
+    final map = <String, PlatformCookieResult>{};
+    if (raw is Map) {
+      for (final entry in raw.entries) {
+        if (entry.value is Map) {
+          map[entry.key.toString()] = PlatformCookieResult.fromJson(
+              Map<String, dynamic>.from(entry.value as Map));
+        }
+      }
+    }
+    return CookieAllResult(
+      success: json['success'] as bool? ?? false,
+      results: map,
+    );
+  }
+}
+
 class TaskInfo {
   final String id;
   final String type;
@@ -94,11 +158,93 @@ class TaskInfo {
       );
 }
 
+class YtdlpFormat {
+  final String formatId;
+  final String label;
+  final String ext;
+  final int? height;
+  final int? filesize;
+
+  const YtdlpFormat({
+    required this.formatId,
+    required this.label,
+    required this.ext,
+    this.height,
+    this.filesize,
+  });
+
+  static YtdlpFormat fromJson(Map<String, dynamic> json) => YtdlpFormat(
+        formatId: json['format_id']?.toString() ?? '',
+        label: json['label']?.toString() ?? '',
+        ext: json['ext']?.toString() ?? '',
+        height: (json['height'] as num?)?.toInt(),
+        filesize: (json['filesize'] as num?)?.toInt(),
+      );
+}
+
+class YtdlpPreview {
+  final String platform; // bili | youtube | douyin
+  final String kind; // video | batch
+  final bool isBatch;
+  final String title;
+  final String uploader;
+  final String thumbnail;
+  final int? duration;
+  final List<YtdlpFormat> formats;
+  final int? itemCount;
+  final List<String> sampleTitles;
+  final String error;
+
+  const YtdlpPreview({
+    required this.platform,
+    required this.kind,
+    required this.isBatch,
+    required this.title,
+    required this.uploader,
+    required this.thumbnail,
+    this.duration,
+    required this.formats,
+    this.itemCount,
+    required this.sampleTitles,
+    required this.error,
+  });
+
+  bool get hasError => error.isNotEmpty;
+
+  String get platformName =>
+      platform == 'bili' ? 'B站' : platform == 'youtube' ? 'YouTube' : '抖音';
+
+  static YtdlpPreview fromJson(Map<String, dynamic> json) {
+    final kind = json['kind']?.toString() ?? 'video';
+    return YtdlpPreview(
+      platform: json['platform']?.toString() ?? 'douyin',
+      kind: kind,
+      isBatch: kind == 'batch',
+      title: json['title']?.toString() ?? '',
+      uploader: json['uploader']?.toString() ?? '',
+      thumbnail: json['thumbnail']?.toString() ?? '',
+      duration: (json['duration'] as num?)?.toInt(),
+      formats: (json['formats'] as List?)
+              ?.map((e) =>
+                  YtdlpFormat.fromJson(e as Map<String, dynamic>))
+              .toList() ??
+          const [],
+      itemCount: (json['item_count'] as num?)?.toInt(),
+      sampleTitles: (json['sample_titles'] as List?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          const [],
+      error: json['error']?.toString() ?? '',
+    );
+  }
+}
+
 class WorkPreview {
   final String title;
   final String author;
   final String coverUrl;
   final bool isGallery;
+  final List<String> imageUrls;
   final Map<String, dynamic> rawData;
 
   const WorkPreview({
@@ -106,13 +252,31 @@ class WorkPreview {
     required this.author,
     required this.coverUrl,
     required this.isGallery,
+    required this.imageUrls,
     required this.rawData,
   });
 
   static WorkPreview? tryParse(Map<String, dynamic>? data) {
     if (data == null || data.isEmpty) return null;
+    final downloads = data['downloads'];
+    final downloadUrls = downloads is List
+        ? downloads.map((e) => e.toString()).where((s) => s.isNotEmpty).toList()
+        : <String>[];
+    final type = data['type']?.toString() ?? '';
+
     String cover = '';
-    if (data['video'] is Map) {
+    if (data['static_cover'] is String && (data['static_cover'] as String).isNotEmpty) {
+      cover = data['static_cover'] as String;
+    }
+    if (cover.isEmpty && data['dynamic_cover'] is String) {
+      cover = data['dynamic_cover'] as String;
+    }
+    String author = data['nickname']?.toString() ?? '';
+
+    var isGallery = type.contains('图集');
+    var imageUrls = downloadUrls;
+
+    if (cover.isEmpty && data['video'] is Map) {
       final video = data['video'] as Map<String, dynamic>;
       if (video['cover'] is Map) {
         final c = video['cover'] as Map<String, dynamic>;
@@ -121,23 +285,31 @@ class WorkPreview {
         }
       }
     }
-    if (cover.isEmpty && data['images'] is List) {
+    if (data['images'] is List) {
       final images = data['images'] as List;
-      if (images.isNotEmpty && images.first is Map) {
-        final first = images.first as Map<String, dynamic>;
-        if (first['url_list'] is List &&
-            (first['url_list'] as List).isNotEmpty) {
-          cover = (first['url_list'] as List).first.toString();
+      final urls = <String>[];
+      for (final img in images) {
+        if (img is Map && img['url_list'] is List && (img['url_list'] as List).isNotEmpty) {
+          urls.add((img['url_list'] as List).first.toString());
         }
       }
+      if (urls.isNotEmpty) {
+        isGallery = true;
+        imageUrls = urls;
+      }
+    }
+    if (author.isEmpty && data['author'] is Map) {
+      author = (data['author'] as Map)['nickname']?.toString() ?? '';
+    }
+    if (type.isEmpty && downloadUrls.length > 1) {
+      isGallery = true;
     }
     return WorkPreview(
       title: data['desc']?.toString() ?? '无标题',
-      author: data['author'] is Map
-          ? ((data['author'] as Map)['nickname']?.toString() ?? '')
-          : '',
+      author: author,
       coverUrl: cover,
-      isGallery: data['images'] != null,
+      isGallery: isGallery,
+      imageUrls: imageUrls,
       rawData: data,
     );
   }

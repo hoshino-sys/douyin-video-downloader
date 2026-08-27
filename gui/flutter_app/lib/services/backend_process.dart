@@ -19,24 +19,40 @@ class BackendProcess {
   int get port => _port;
 
   Future<void> start() async {
-    final script = _findBackendScript();
-    if (script == null) {
-      throw BackendException(
-          '未找到 gui/backend.py，请确认应用位于项目目录内，或设置环境变量 DOUK_BACKEND 指向该文件');
-    }
-    final python = await _findPython(script.parent.parent);
-    if (python == null) {
-      throw BackendException('未找到可用的 Python (>=3.12) 环境');
-    }
-    _port = await _pickFreePort();
-    try {
-      _process = await Process.start(
-        python,
-        [script.path, '--host', '127.0.0.1', '--port', '$_port'],
-        workingDirectory: script.parent.parent.path,
-      );
-    } catch (e) {
-      throw BackendException('启动后端进程失败：$e');
+    final appRoot = File(Platform.resolvedExecutable).parent.path;
+    final exe = _findBackendExe();
+    if (exe != null) {
+      _port = await _pickFreePort();
+      try {
+        _process = await Process.start(
+          exe.path,
+          ['--host', '127.0.0.1', '--port', '$_port'],
+          workingDirectory: exe.parent.path,
+          environment: {'DOUK_HOME': appRoot},
+        );
+      } catch (e) {
+        throw BackendException('启动后端进程失败：$e');
+      }
+    } else {
+      final script = _findBackendScript();
+      if (script == null) {
+        throw BackendException(
+            '未找到 gui/backend.py 或 backend.exe，请确认应用位于项目目录内，或设置环境变量 DOUK_BACKEND 指向该文件');
+      }
+      final python = await _findPython(script.parent.parent);
+      if (python == null) {
+        throw BackendException('未找到可用的 Python (>=3.12) 环境，请安装 Python 3.12 并执行 pip install -r requirements.txt，或使用自带 backend.exe 的发布版');
+      }
+      _port = await _pickFreePort();
+      try {
+        _process = await Process.start(
+          python,
+          [script.path, '--host', '127.0.0.1', '--port', '$_port'],
+          workingDirectory: script.parent.parent.path,
+        );
+      } catch (e) {
+        throw BackendException('启动后端进程失败：$e');
+      }
     }
     _process!.stdout
         .transform(systemEncoding.decoder)
@@ -56,7 +72,7 @@ class BackendProcess {
   }
 
   Future<bool> waitHealthy({
-    Duration timeout = const Duration(seconds: 60),
+    Duration timeout = const Duration(seconds: 120),
   }) async {
     final deadline = DateTime.now().add(timeout);
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 2);
@@ -84,6 +100,34 @@ class BackendProcess {
   void kill() {
     _process?.kill();
     _process = null;
+  }
+
+  File? _findBackendExe() {
+    for (final start in [
+      File(Platform.resolvedExecutable).parent,
+      Directory.current,
+    ]) {
+      // ignore: unnecessary_cast
+      final dir = start is File ? start : start as Directory;
+      // onedir 布局优先（backend/backend.exe，启动快且稳定）
+      final onedir =
+          File('${dir.path}${Platform.pathSeparator}backend${Platform.pathSeparator}backend.exe');
+      if (onedir.existsSync()) return onedir;
+      for (final name in ['backend.exe', 'backend']) {
+        final f = File('${dir.path}${Platform.pathSeparator}$name');
+        if (f.existsSync()) return f;
+      }
+      // also check gui/backend.exe relative to walk-up
+      var walk = dir;
+      for (var i = 0; i < 4; i++) {
+        final c = File('${walk.path}${Platform.pathSeparator}gui${Platform.pathSeparator}backend.exe');
+        if (c.existsSync()) return c;
+        final parent = walk.parent;
+        if (parent.path == walk.path) break;
+        walk = parent;
+      }
+    }
+    return null;
   }
 
   File? _findBackendScript() {

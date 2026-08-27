@@ -28,3 +28,5 @@ rookiepy==0.5.6
     # via douk-downloader (pyproject.toml)
 uvicorn==0.35.0
     # via douk-downloader (pyproject.toml)
+yt-dlp==2026.8.19
+    # via douk-downloader (pyproject.toml)

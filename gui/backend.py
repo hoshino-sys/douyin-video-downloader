@@ -5,7 +5,19 @@ import sys
 import threading
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if getattr(sys, "frozen", False):
+    env_root = os.environ.get("DOUK_HOME")
+    PROJECT_ROOT = (
+        Path(env_root).resolve()
+        if env_root
+        else Path(sys.executable).resolve().parent
+    )
+    # In frozen mode, src modules are bundled, but ensure _MEIPASS is in path for data files
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass and meipass not in sys.path:
+        sys.path.insert(0, meipass)
+else:
+    PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 os.chdir(PROJECT_ROOT)
@@ -19,6 +31,10 @@ from gui.api_ext import setup_gui_routes
 def watch_parent_process():
     def reader():
         try:
+            # If stdin is already at EOF (e.g., launched without a pipe), don't exit immediately
+            first = sys.stdin.buffer.read(1)
+            if not first:
+                return
             while sys.stdin.buffer.read(4096):
                 pass
         except Exception:

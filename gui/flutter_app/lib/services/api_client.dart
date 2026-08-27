@@ -67,11 +67,19 @@ class ApiClient {
     return List<String>.from(data['browsers'] as List? ?? []);
   }
 
-  Future<CookieResult> cookieFromBrowser(String browser) async =>
+  Future<CookieResult> cookieFromBrowser(String browser,
+      {String target = 'douyin'}) async =>
       CookieResult.fromJson(await post(
         '/api/gui/cookie/browser',
-        body: {'browser': browser},
+        body: {'browser': browser, 'target': target},
         timeout: const Duration(seconds: 120),
+      ));
+
+  Future<CookieAllResult> cookieFromBrowserAll(String browser) async =>
+      CookieAllResult.fromJson(await post(
+        '/api/gui/cookie/browser',
+        body: {'browser': browser, 'target': 'all'},
+        timeout: const Duration(seconds: 180),
       ));
 
   Future<CookieResult> cookiePaste(String text) async =>
@@ -108,16 +116,47 @@ class ApiClient {
     return payload is Map<String, dynamic> ? payload : null;
   }
 
+  // ---- B站/YouTube (yt-dlp) ----
+
+  Future<YtdlpPreview> detectUrl(String url) async =>
+      YtdlpPreview.fromJson(await post(
+        '/api/gui/detect',
+        body: {'url': url},
+        timeout: const Duration(seconds: 120),
+      ));
+
+  Future<TaskInfo?> createYtdlpTask({
+    required String url,
+    String? formatId,
+    String? label,
+    String? saveDir,
+  }) async {
+    final result = await post('/api/gui/task', body: {
+      'type': 'ytdlp',
+      'url': url,
+      'format_id': ?formatId,
+      'label': ?label,
+      'save_dir': ?saveDir,
+    }, timeout: const Duration(seconds: 60));
+    if (result['status'] != 'success') {
+      throw ApiException(result['message']?.toString() ?? '创建任务失败');
+    }
+    return TaskInfo.fromJson(
+        result['task'] as Map<String, dynamic>? ?? {});
+  }
+
   // ---- 任务 ----
 
   Future<TaskInfo?> createDetailTask({
     required bool tiktok,
     required Map<String, dynamic> data,
+    String? saveDir,
   }) async {
     final result = await post('/api/gui/task', body: {
       'type': 'detail',
       'platform': tiktok ? 'tiktok' : 'douyin',
       'data': data,
+      'save_dir': ?saveDir,
     });
     if (result['status'] != 'success') {
       throw ApiException(result['message']?.toString() ?? '创建任务失败');
@@ -132,6 +171,7 @@ class ApiClient {
     required String tab,
     required String earliest,
     required String latest,
+    String? saveDir,
   }) async {
     final result = await post('/api/gui/task', body: {
       'type': 'account',
@@ -140,6 +180,7 @@ class ApiClient {
       'tab': tab,
       'earliest': earliest,
       'latest': latest,
+      'save_dir': ?saveDir,
     });
     if (result['status'] != 'success') {
       throw ApiException(result['message']?.toString() ?? '创建任务失败');
@@ -153,6 +194,15 @@ class ApiClient {
     return ((data['tasks'] as List?) ?? [])
         .map((e) => TaskInfo.fromJson(e as Map<String, dynamic>))
         .toList();
+  }
+
+  Future<bool> openFolder(String path) async {
+    try {
+      final r = await post('/api/gui/open_folder', body: {'path': path});
+      return r['success'] == true;
+    } catch (_) {
+      return false;
+    }
   }
 
   void dispose() => _client.close();

@@ -253,7 +253,7 @@ class _SettingsPageState extends State<SettingsPage> {
               ],
             ]),
             const SizedBox(height: 12),
-            Text('提示：Cookie 请在右上角钥匙图标中管理；部分设置需重启下载任务后生效。',
+            Text('提示：Cookie 请在右上角钥匙图标中管理（支持抖音/TikTok/B站/YouTube）；以下为抖音/TikTok 下载设置，B站/YouTube 下载使用系统网络设置；部分设置需重启下载任务后生效。',
                 style: Theme.of(context).textTheme.bodySmall),
           ],
         ),

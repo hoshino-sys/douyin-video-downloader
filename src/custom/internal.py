@@ -6,7 +6,7 @@ VERSION_MAJOR = 5
 VERSION_MINOR = 8
 VERSION_BETA = True
 __VERSION__ = f"{VERSION_MAJOR}.{VERSION_MINOR}.{'beta' if VERSION_BETA else 'stable'}"
-PROJECT_NAME = f"抖音视频下载 V{VERSION_MAJOR}.{VERSION_MINOR} {'Beta' if VERSION_BETA else 'Stable'}"
+PROJECT_NAME = f"夜星视频下载器 V{VERSION_MAJOR}.{VERSION_MINOR} {'Beta' if VERSION_BETA else 'Stable'}"
 
 REPOSITORY = "https://github.com/JoeanAmier/TikTokDownloader"
 LICENCE = "GNU General Public License v3.0"
@@ -14,8 +14,9 @@ DOCUMENTATION_URL = "https://github.com/JoeanAmier/TikTokDownloader/wiki/Documen
 RELEASES = "https://github.com/JoeanAmier/TikTokDownloader/releases/latest"
 
 DISCLAIMER_TEXT = (
-    "关于 抖音视频下载 (douyin-video-downloader) 的 免责声明：\n"
+    "关于 夜星视频下载 (yexing-video-downloader) 的 免责声明：\n"
     "\n"
+    "本工具支持抖音、TikTok、Bilibili、YouTube 等平台的内容下载，使用前请仔细阅读以下条款：\n"
     "1. 使用者对本项目的使用由使用者自行决定，并自行承担风险。作者对使用者使用本项目所产生的任何损失、责任、或风险概不负责。\n"
     "2. 本项目的作者提供的代码和功能是基于现有知识和技术的开发成果。作者按现有技术水平努力确保代码的正确性和安全性，但不保证代码完全没有错误或缺陷。\n"
     "3. 本项目依赖的所有第三方库、插件或服务各自遵循其原始开源或商业许可，使用者需自行查阅并遵守相应协议，作者不对第三方组件的稳定性、安全性及合规性承担任何责任。\n"

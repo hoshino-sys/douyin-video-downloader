@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../app.dart';
 import '../models.dart';
+import '../services/toast.dart';
 
 class TasksPage extends StatefulWidget {
   const TasksPage({super.key});
@@ -134,6 +136,38 @@ class _TaskCard extends StatelessWidget {
             title: Text(task.label.isEmpty ? task.type : task.label),
             subtitle: Text(subtitleParts.join(' · '), maxLines: 2, overflow: TextOverflow.ellipsis),
             trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+              if (task.downloadDir.isNotEmpty)
+                IconButton(
+                  tooltip: '打开文件位置',
+                  icon: const Icon(Icons.folder_open, size: 20),
+                  onPressed: () async {
+                    try {
+                      if (Platform.isWindows) {
+                        var target = task.downloadDir;
+                        if (!await Directory(target).exists()) {
+                          final parent = Directory(target).parent.path;
+                          if (await Directory(parent).exists()) {
+                            target = parent;
+                          } else {
+                            if (context.mounted) {
+                              AppToast.show(context, '路径不存在：$target');
+                            }
+                            return;
+                          }
+                        }
+                        await Process.run('explorer.exe', ['/separate,$target']);
+                        if (context.mounted) AppToast.show(context, '已打开文件夹');
+                      } else {
+                        final ok = await App.client!.openFolder(task.downloadDir);
+                        if (context.mounted) {
+                          AppToast.show(context, ok ? '已打开文件夹' : '打开失败，请检查路径是否存在');
+                        }
+                      }
+                    } catch (e) {
+                      if (context.mounted) AppToast.show(context, '打开失败：$e');
+                    }
+                  },
+                ),
               Text(
                 switch (task.status) {
                   'running' => '进行中',
@@ -171,7 +205,7 @@ class _TaskCard extends StatelessWidget {
                     icon: const Icon(Icons.copy, size: 16),
                     onPressed: () {
                       Clipboard.setData(ClipboardData(text: task.downloadDir));
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已复制路径')));
+                      if (context.mounted) AppToast.show(context, '已复制路径');
                     },
                   ),
                 ]),
@@ -202,7 +236,7 @@ class _TaskCard extends StatelessWidget {
                               icon: const Icon(Icons.copy_all, size: 16),
                               onPressed: () {
                                 Clipboard.setData(ClipboardData(text: task.logs.join('\n')));
-                                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已复制日志')));
+                                if (context.mounted) AppToast.show(context, '已复制日志');
                               },
                             ),
                           ],

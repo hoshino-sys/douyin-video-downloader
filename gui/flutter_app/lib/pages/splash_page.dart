@@ -81,7 +81,7 @@ class _SplashPageState extends State<SplashPage> {
                           size: 72, color: Color(0xFFFE2C55)),
                       const SizedBox(height: 24),
                       Text(
-                        'DouK 下载器',
+                        '夜星视频下载器',
                         style: Theme.of(context).textTheme.headlineSmall,
                       ),
                       const SizedBox(height: 32),

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../app.dart';
 import '../models.dart';
+import '../services/toast.dart';
 import 'home_shell.dart';
 
 class OnboardingPage extends StatefulWidget {
@@ -221,12 +222,16 @@ class _CookieSetupStepState extends State<CookieSetupStep> {
       _error = null;
     });
     try {
-      final result = await App.client!.cookieFromBrowser(browser);
+      final result = await App.client!.cookieFromBrowserAll(browser);
       if (!mounted) return;
-      if (!result.success) {
-        setState(() => _error = result.message);
-      } else {
+      final summary = result.summary();
+      if (result.success) {
         widget.onDone();
+        AppToast.show(context, 'Cookie 导入完成：$summary',
+            duration: const Duration(seconds: 4));
+      } else {
+        setState(() => _error = '未能导入任何平台 Cookie：$summary。'
+            '请确认已在浏览器登录、关闭浏览器后重试，或改用手动粘贴方式');
       }
     } catch (e) {
       setState(() => _error = e.toString());
@@ -271,10 +276,10 @@ class _CookieSetupStepState extends State<CookieSetupStep> {
               children: [
                 BackButton(onPressed: widget.onBack),
                 const SizedBox(width: 4),
-                Expanded(
-                  child: Text('配置抖音 Cookie',
-                      style: Theme.of(context).textTheme.titleLarge),
-                ),
+                 Expanded(
+                   child: Text('配置 Cookie',
+                       style: Theme.of(context).textTheme.titleLarge),
+                 ),
                 TextButton(
                   onPressed: () async {
                     final skip = await showDialog<bool>(
@@ -338,7 +343,7 @@ class _CookieSetupStepState extends State<CookieSetupStep> {
     return Column(
       children: [
         Text(
-          '首次使用需要配置 Cookie\n请选择一种获取方式',
+          '首次使用建议配置 Cookie\n支持抖音 / TikTok / B站 / YouTube',
           textAlign: TextAlign.center,
           style: Theme.of(context).textTheme.bodyLarge,
         ),
@@ -349,7 +354,7 @@ class _CookieSetupStepState extends State<CookieSetupStep> {
               child: _MethodCard(
                 icon: Icons.travel_explore,
                 title: '从浏览器导入',
-                subtitle: '自动读取本机浏览器中已登录的抖音 Cookie（推荐）',
+                subtitle: '一键导入浏览器中已登录的抖音/TikTok/B站/YouTube Cookie（推荐）',
                 onTap: () => setState(() => _method = _Method.browser),
               ),
             ),
@@ -358,7 +363,7 @@ class _CookieSetupStepState extends State<CookieSetupStep> {
               child: _MethodCard(
                 icon: Icons.content_paste,
                 title: '手动粘贴',
-                subtitle: '从浏览器开发者工具复制 Cookie 后粘贴到应用中',
+                subtitle: '从浏览器开发者工具复制抖音 Cookie 后粘贴到应用中',
                 onTap: () => setState(() => _method = _Method.paste),
               ),
             ),
@@ -375,10 +380,10 @@ class _CookieSetupStepState extends State<CookieSetupStep> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text('选择已登录抖音的浏览器：', style: Theme.of(context).textTheme.bodyLarge),
+        Text('选择已登录各平台的浏览器（一键导入抖音/TikTok/B站/YouTube）：', style: Theme.of(context).textTheme.bodyLarge),
         const SizedBox(height: 4),
         Text(
-          '提示：读取 Chromium 内核浏览器的 Cookie 通常需要先关闭对应浏览器；若失败请尝试以管理员身份运行本程序。',
+          '提示：读取 Chromium 内核浏览器的 Cookie 通常需要先关闭对应浏览器；若失败请尝试以管理员身份运行本程序。未登录的平台会提示失败，不影响其他平台。',
           style: Theme.of(context).textTheme.bodySmall,
         ),
         const SizedBox(height: 12),
@@ -405,7 +410,7 @@ class _CookieSetupStepState extends State<CookieSetupStep> {
                   height: 16,
                   child: CircularProgressIndicator(strokeWidth: 2)),
               SizedBox(width: 8),
-              Text('正在读取浏览器 Cookie…'),
+              Text('正在读取浏览器 Cookie（四个平台）…'),
             ],
           ),
       ],

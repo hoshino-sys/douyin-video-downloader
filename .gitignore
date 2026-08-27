@@ -12,3 +12,8 @@ __pycache__/
 gui/__pycache__/
 gui/flutter_app/build/
 gui/flutter_app/.dart_tool/
+
+/release/
+/backend.spec
+/backend_of.spec
+/temp_custom_dl/

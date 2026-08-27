@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../app.dart';
 import '../models.dart';
+import '../services/toast.dart';
 import 'account_download_page.dart';
 import 'link_download_page.dart';
 import 'onboarding_page.dart';
@@ -79,7 +80,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 24,
-        title: const Text('DouK 下载器'),
+        title: const Text('夜星视频下载器'),
         actions: [
           IconButton(
             tooltip: 'Cookie 状态',
@@ -179,10 +180,131 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
                 },
                 child: const Text('重新配置 Cookie'),
               ),
+              const SizedBox(height: 20),
+              Text('一键导入（抖音/TikTok/B站/YouTube，失败项仅提示）',
+                  style: Theme.of(ctx).textTheme.labelMedium),
+              const SizedBox(height: 8),
+              FilledButton.icon(
+                icon: const Icon(Icons.done_all, size: 18),
+                label: const Text('一键导入全部 Cookie'),
+                onPressed: () async {
+                  Navigator.pop(ctx);
+                  await _importAllCookies();
+                },
+              ),
+              const SizedBox(height: 20),
+              Text('单独导入（可选，用于对应平台下载）',
+                  style: Theme.of(ctx).textTheme.labelMedium),
+              const SizedBox(height: 8),
+              Row(children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.live_tv_outlined, size: 18),
+                    label: const Text('导入B站 Cookie'),
+                    onPressed: () async {
+                      Navigator.pop(ctx);
+                      await _importPlatformCookie('bili');
+                    },
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.ondemand_video_outlined, size: 18),
+                    label: const Text('导入YouTube Cookie'),
+                    onPressed: () async {
+                      Navigator.pop(ctx);
+                      await _importPlatformCookie('youtube');
+                    },
+                  ),
+                ),
+              ]),
             ],
           ),
         ),
       ),
     );
+  }
+
+  Future<void> _importAllCookies() async {
+    List<String> browsers;
+    try {
+      browsers = await App.client!.cookieBrowsers();
+    } catch (e) {
+      if (mounted) AppToast.show(context, '获取浏览器列表失败：$e', success: false);
+      return;
+    }
+    if (!mounted) return;
+    final browser = await _pickBrowserDialog('一键导入全部平台 Cookie', browsers);
+    if (browser == null || !mounted) return;
+    AppToast.show(context, '正在读取浏览器 Cookie（四个平台）…',
+        duration: const Duration(seconds: 20));
+    try {
+      final result = await App.client!.cookieFromBrowserAll(browser);
+      if (!mounted) return;
+      AppToast.show(
+        context,
+        result.success ? '导入完成：${result.summary()}' : '导入失败：${result.summary()}',
+        success: result.success,
+        duration: const Duration(seconds: 4),
+      );
+    } catch (e) {
+      if (mounted) AppToast.show(context, '导入失败：$e', success: false);
+    }
+  }
+
+  Future<String?> _pickBrowserDialog(
+      String title, List<String> browsers) async {
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (browsers.isEmpty) const Text('未获取到支持的浏览器列表'),
+              for (final b in browsers)
+                ListTile(
+                  title: Text(b),
+                  onTap: () => Navigator.pop(ctx, b),
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _importPlatformCookie(String target) async {
+    final platformName = target == 'bili' ? 'B站' : 'YouTube';
+    List<String> browsers;
+    try {
+      browsers = await App.client!.cookieBrowsers();
+    } catch (e) {
+      if (mounted) AppToast.show(context, '获取浏览器列表失败：$e', success: false);
+      return;
+    }
+    if (!mounted) return;
+    final browser = await _pickBrowserDialog('选择已登录$platformName的浏览器', browsers);
+    if (browser == null || !mounted) return;
+    AppToast.show(context, '正在读取$platformName Cookie…', duration: const Duration(seconds: 10));
+    try {
+      final result =
+          await App.client!.cookieFromBrowser(browser, target: target);
+      if (!mounted) return;
+      AppToast.show(
+        context,
+        result.success
+            ? '$platformName Cookie 导入成功'
+            : result.message,
+        success: result.success,
+      );
+    } catch (e) {
+      if (mounted) AppToast.show(context, '导入失败：$e', success: false);
+    }
   }
 }

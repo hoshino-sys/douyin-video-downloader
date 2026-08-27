@@ -1,7 +1,7 @@
 [project]
-name = "douyin-video-downloader"
+name = "yexing-video-downloader"
 version = "5.8"
-description = "抖音视频下载 (douyin-video-downloader) - 抖音发布/喜欢/收藏/收藏夹/视频/图集/实况/直播/音乐/合集/评论/账号/搜索/热榜数据采集与批量下载工具"
+description = "夜星视频下载 (yexing-video-downloader) - 抖音/TikTok/Bilibili/YouTube 视频与图集采集与批量下载工具"
 authors = [
     { name = "yexing", email = "19860620884@163.com" },
 ]
@@ -22,6 +22,7 @@ dependencies = [
     "rich>=13.9.4",
     "rookiepy>=0.5.6",
     "uvicorn>=0.34.0",
+    "yt-dlp>=2025.1.1",
 ]
 
 [project.urls]
