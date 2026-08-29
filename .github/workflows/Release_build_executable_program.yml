@@ -12,6 +12,8 @@ jobs:
   build:
     name: 构建于 ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    # 上游专用：fork 仓库的发布走本地 build_release.py（CI 产物缺 vendor 组件），禁止 CI 注入资产
+    if: github.repository == 'JoeanAmier/TikTokDownloader'
     strategy:
       matrix:
         os: [ windows-latest, windows-11-arm, macos-15-intel, macos-latest ]

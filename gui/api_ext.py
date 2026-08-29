@@ -202,10 +202,14 @@ def _check_update() -> dict:
     result["latest"] = tag
     result["notes"] = str(data.get("body") or "")[:1200]
     result["published_at"] = str(data.get("published_at") or "")
-    for asset in data.get("assets") or []:
-        if str(asset.get("name") or "").lower().endswith(".zip"):
-            result["zip_url"] = str(asset.get("browser_download_url") or "")
-            break
+    zips = [
+        str(a.get("browser_download_url") or "")
+        for a in (data.get("assets") or [])
+        if str(a.get("name") or "").lower().endswith(".zip")
+    ]
+    # 优先本应用命名规则的分发包（历史上有 CI 注入的同页资产，按名字区分）
+    preferred = [u for u in zips if "夜星视频下载器" in u]
+    result["zip_url"] = (preferred or zips or [""])[0]
     result["update_available"] = bool(tag) and nums(tag) > nums(__VERSION__)
     return result
 

@@ -18,6 +18,8 @@ env:
 jobs:
   publish-docker:
     runs-on: ubuntu-latest
+    # 上游专用：fork 仓库不发布 Docker 镜像
+    if: github.repository == 'JoeanAmier/TikTokDownloader'
 
     steps:
       - name: 拉取源码
