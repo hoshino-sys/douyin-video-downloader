@@ -196,7 +196,27 @@ def _check_update() -> dict:
         with urllib.request.urlopen(req, timeout=8) as resp:
             data = json.load(resp)
     except Exception as e:
-        result["error"] = f"无法连接更新服务器：{e}"[:160]
+        # GitHub API 有按 IP 的匿名速率限制，共享代理出口常被耗尽；
+        # 回退抓 releases/latest 页面重定向（HTML 不占 API 限额），只有版本号、无说明
+        tag = ""
+        try:
+            req = urllib.request.Request(
+                f"{RELEASES}/latest", headers={"User-Agent": USERAGENT}
+            )
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                m = re.search(r"/tag/v?([0-9][\d.]*)", resp.geturl() or "")
+                if m:
+                    tag = m.group(1).rstrip(".")
+        except Exception:
+            pass
+        if not tag:
+            result["error"] = f"无法连接更新服务器：{e}"[:160]
+            return result
+        result["latest"] = tag
+        result["zip_url"] = (
+            f"{_RELEASE_DOWNLOAD_PREFIX}v{tag}/yexing-video-downloader_v{tag}.zip"
+        )
+        result["update_available"] = nums(tag) > nums(__VERSION__)
         return result
     tag = str(data.get("tag_name") or "").lstrip("vV")
     result["latest"] = tag
