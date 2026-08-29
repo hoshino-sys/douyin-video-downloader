@@ -21,13 +21,15 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-RELEASE_DIR_NAME = "夜星视频下载器_v5.8"
+RELEASE_DIR_NAME = "夜星视频下载器_v5.9"
 REL = ROOT / "release" / RELEASE_DIR_NAME
-DIST_BACKEND = ROOT / "dist" / "backend"
+DIST_BACKEND = ROOT / "dist" / "夜星视频下载器后端"
 FLUTTER_RELEASE = ROOT / "gui" / "flutter_app" / "build" / "windows" / "x64" / "runner" / "Release"
 VENDOR_FFMPEG = ROOT / "vendor" / "ffmpeg"
 VENDOR_QJS = ROOT / "vendor" / "qjs" / "qjs.exe"
 APP_EXE = "夜星视频下载器.exe"
+BACKEND_EXE = "夜星视频下载器后端.exe"
+LEGACY_BACKEND_EXES = ("backend.exe",)  # 旧版本包内的后端进程名，防漏杀
 
 # 前端文件改名映射（douk_gui.exe → 夜星视频下载器.exe）
 FRONTEND_RENAME = {"douk_gui.exe": APP_EXE}
@@ -46,17 +48,43 @@ def fail(text: str) -> None:
 
 
 def check_no_running() -> None:
-    result = subprocess.run(
-        ["tasklist", "/FO", "CSV"], capture_output=True
+    """仅拦截运行在本仓库 release/dist 目录里的实例；用户自己另装副本不受影响。"""
+    try:
+        result = subprocess.run(
+            [
+                "powershell", "-NoProfile", "-Command",
+                "Get-Process | Where-Object { $_.Path } "
+                "| ForEach-Object { $_.Path.ToLower() }",
+            ],
+            capture_output=True,
+            timeout=30,
+        )
+        paths = result.stdout.decode("utf-8", errors="ignore").splitlines()
+    except Exception:
+        paths = []
+    prefixes = tuple(
+        str(ROOT / name).lower().rstrip("\\") + os.sep
+        for name in ("release", "dist", os.path.join("gui", "flutter_app", "build"))
     )
-    text = result.stdout.decode("gbk", errors="ignore")
-    running = []
-    if "backend.exe" in text.lower():
-        running.append("backend.exe")
-    if APP_EXE in text:
-        running.append(APP_EXE)
-    if running:
-        fail(f"以下进程正在运行，请先退出应用再打包：{'、'.join(running)}")
+    locked = sorted(
+        {p for p in paths if p.startswith(prefixes)}
+    )
+    if locked:
+        fail("以下进程正在使用构建目录，请先退出应用再打包：\n  " + "\n  ".join(locked))
+
+
+def bootstrap_release_dir() -> None:
+    """发布目录尚不存在时，从旧版本目录整体迁移（保留 Volume 用户数据）。"""
+    if REL.exists():
+        return
+    candidates = sorted(
+        p for p in REL.parent.glob("夜星视频下载器_v5.*") if p.is_dir()
+    )
+    if not candidates:
+        fail(f"未找到发布目录 {REL}，也没有可迁移的旧版发布目录")
+    src = candidates[-1]
+    log(f"从旧版发布目录迁移：{src.name} → {RELEASE_DIR_NAME}")
+    shutil.copytree(src, REL)
 
 
 def ensure_vendor_ffmpeg() -> None:
@@ -90,7 +118,7 @@ def build_backend() -> None:
         [sys.executable, "-m", "PyInstaller", "backend.spec", "--noconfirm"],
         cwd=ROOT,
     )
-    if result.returncode != 0 or not (DIST_BACKEND / "backend.exe").exists():
+    if result.returncode != 0 or not (DIST_BACKEND / BACKEND_EXE).exists():
         fail("后端构建失败")
     internal = DIST_BACKEND / "_internal"
     if not (internal / "yt_dlp_ejs").exists():
@@ -134,7 +162,36 @@ def assemble_backend() -> None:
                 shutil.rmtree(volume_bak, ignore_errors=True)
             else:
                 shutil.move(volume_bak, volume)
-    shutil.copy2(DIST_BACKEND / "backend.exe", backend_dir / "backend.exe")
+    shutil.copy2(DIST_BACKEND / BACKEND_EXE, backend_dir / BACKEND_EXE)
+    # 清理旧版后端进程文件，避免包内残留两份后端
+    for legacy in ("backend.exe", "backend"):
+        legacy_path = backend_dir / legacy
+        if legacy_path.exists():
+            legacy_path.unlink()
+
+
+def write_launch_bat() -> None:
+    bat = REL / "启动.bat"
+    content = "\r\n".join(
+        [
+            "@echo off",
+            "chcp 65001 >nul",
+            "echo 正在启动 夜星视频下载器...",
+            f'if not exist "backend\\{BACKEND_EXE}" (',
+            "  echo 未找到内置后端，尝试使用 Python 后端...",
+            "  python --version >nul 2>&1",
+            "  if errorlevel 1 (",
+            "    echo [错误] 未找到内置后端与 Python 3.12，请先安装 Python 3.12 并添加到 PATH",
+            "    echo 下载地址: https://www.python.org/downloads/",
+            "    pause",
+            "    exit /b",
+            "  )",
+            ")",
+            f'start "" "{APP_EXE}"',
+            "",
+        ]
+    )
+    bat.write_text(content, encoding="utf-8-sig", newline="\r\n")
 
 
 def assemble_frontend() -> None:
@@ -215,9 +272,9 @@ def verify_zip(zip_path: Path) -> None:
     ) as tmp:
         with zipfile.ZipFile(zip_path) as zf:
             zf.extractall(tmp)
-        backend_exe = Path(tmp) / RELEASE_DIR_NAME / "backend" / "backend.exe"
+        backend_exe = Path(tmp) / RELEASE_DIR_NAME / "backend" / BACKEND_EXE
         if not backend_exe.exists():
-            fail("冒烟测试失败：解压后缺少 backend/backend.exe")
+            fail(f"冒烟测试失败：解压后缺少 backend/{BACKEND_EXE}")
         if not (backend_exe.parent / "_internal" / "base_library.zip").exists():
             fail("冒烟测试失败：解压后缺少 base_library.zip（Python 标准库）")
         env = {**os.environ, "DOUK_HOME": str(backend_exe.parent.parent)}
@@ -268,9 +325,10 @@ def main() -> None:
         except Exception:
             pass
 
-    if not REL.exists():
+    if not REL.exists() and not any(REL.parent.glob("夜星视频下载器_v5.*")):
         fail(f"未找到发布目录 {REL}")
     check_no_running()
+    bootstrap_release_dir()
     ensure_vendor_ffmpeg()
     ensure_vendor_qjs()
     build_backend()
@@ -279,6 +337,7 @@ def main() -> None:
     assemble_frontend()
     sync_fallback_sources()
     copy_ffmpeg()
+    write_launch_bat()
     log(f"打包完成: {REL}")
     if args.zip:
         make_zip()

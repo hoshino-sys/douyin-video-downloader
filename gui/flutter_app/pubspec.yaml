@@ -1,5 +1,5 @@
 name: douk_gui
-description: "抖音视频下载 (douyin-video-downloader) - Flutter GUI for douyin-video-downloader"
+description: "夜星视频下载器 - 抖音/TikTok/Bilibili/YouTube 视频下载工具 GUI"
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev

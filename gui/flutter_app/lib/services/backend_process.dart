@@ -103,25 +103,31 @@ class BackendProcess {
   }
 
   File? _findBackendExe() {
+    const exeNames = ['夜星视频下载器后端.exe', 'backend.exe', 'backend'];
     for (final start in [
       File(Platform.resolvedExecutable).parent,
       Directory.current,
     ]) {
       // ignore: unnecessary_cast
       final dir = start is File ? start : start as Directory;
-      // onedir 布局优先（backend/backend.exe，启动快且稳定）
-      final onedir =
-          File('${dir.path}${Platform.pathSeparator}backend${Platform.pathSeparator}backend.exe');
-      if (onedir.existsSync()) return onedir;
-      for (final name in ['backend.exe', 'backend']) {
+      // onedir 布局优先（backend/<后端exe>，启动快且稳定）
+      for (final name in exeNames) {
+        final onedir =
+            File('${dir.path}${Platform.pathSeparator}backend${Platform.pathSeparator}$name');
+        if (onedir.existsSync()) return onedir;
+      }
+      for (final name in exeNames) {
         final f = File('${dir.path}${Platform.pathSeparator}$name');
         if (f.existsSync()) return f;
       }
-      // also check gui/backend.exe relative to walk-up
+      // also check gui/<后端exe> relative to walk-up
       var walk = dir;
       for (var i = 0; i < 4; i++) {
-        final c = File('${walk.path}${Platform.pathSeparator}gui${Platform.pathSeparator}backend.exe');
-        if (c.existsSync()) return c;
+        for (final name in exeNames) {
+          final c = File(
+              '${walk.path}${Platform.pathSeparator}gui${Platform.pathSeparator}$name');
+          if (c.existsSync()) return c;
+        }
         final parent = walk.parent;
         if (parent.path == walk.path) break;
         walk = parent;

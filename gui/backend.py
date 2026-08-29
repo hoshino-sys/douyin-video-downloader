@@ -68,12 +68,12 @@ async def start(port: int, host: str = "127.0.0.1"):
             application.database,
             application,
         )
-        print(f"[DouK GUI] backend ready: http://{host}:{port}", flush=True)
+        print(f"[夜星视频下载器] backend ready: http://{host}:{port}", flush=True)
         await server.run_server(host, port)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="DouK-Downloader GUI Backend")
+    parser = argparse.ArgumentParser(description="夜星视频下载器 后端服务")
     parser.add_argument("--host", type=str, default="127.0.0.1")
     parser.add_argument("--port", type=int, default=5555)
     args = parser.parse_args()

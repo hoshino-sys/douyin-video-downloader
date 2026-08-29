@@ -17,7 +17,7 @@ class DoukApp extends StatelessWidget {
     return ListenableBuilder(
       listenable: themeController,
       builder: (context, _) => MaterialApp(
-        title: '抖音视频下载器/夜星',
+        title: '夜星视频下载器',
         debugShowCheckedModeBanner: false,
         theme: ThemeData(
           colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFFFE2C55), brightness: Brightness.light),

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../app.dart';
 import '../models.dart';
 import '../services/toast.dart';
+import '../widgets/platform_badge.dart';
 import 'account_download_page.dart';
 import 'link_download_page.dart';
 import 'onboarding_page.dart';
@@ -20,7 +21,9 @@ class HomeShell extends StatefulWidget {
 
 class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   int _index = 0;
-  bool _cookieBannerVisible = false;
+  bool _cookieBannerDismissed = false;
+  CookieStatus? _cookieStatus;
+  bool _updateAvailable = false;
   late bool _cookieLoggedIn;
 
   @override
@@ -28,7 +31,10 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     super.initState();
     _cookieLoggedIn = widget.cookieLoggedIn;
     WidgetsBinding.instance.addObserver(this);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _checkCookie());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkCookie();
+      _startupUpdateCheck();
+    });
   }
 
   @override
@@ -45,12 +51,29 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     }
   }
 
+  bool get _cookieBannerVisible =>
+      !_cookieBannerDismissed && !(_cookieStatus?.allImported ?? false);
+
+  /// 启动时后台静默检查更新，发现新版本轻提示一次
+  Future<void> _startupUpdateCheck() async {
+    try {
+      final info = await App.client!.updateCheck();
+      if (!mounted || !info.updateAvailable) return;
+      setState(() => _updateAvailable = true);
+      AppToast.show(
+        context,
+        '发现新版本 v${info.latest}，可在「设置」中下载更新',
+        duration: const Duration(seconds: 5),
+      );
+    } catch (_) {}
+  }
+
   Future<void> _checkCookie() async {
     try {
       final status = await App.client!.cookieStatus();
       if (!mounted) return;
       setState(() {
-        _cookieBannerVisible = !status.configured;
+        _cookieStatus = status;
         _cookieLoggedIn = status.loggedIn;
       });
     } catch (_) {}
@@ -97,14 +120,47 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
         children: [
           if (_cookieBannerVisible)
             MaterialBanner(
-              content: const Text('尚未配置 Cookie，部分功能不可用。点击右侧按钮完成配置。'),
-              leading: const Icon(Icons.warning_amber_rounded),
-              backgroundColor:
-                  Theme.of(context).colorScheme.errorContainer.withValues(alpha: 0.5),
+              content: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.key_off_outlined,
+                          size: 18, color: Theme.of(context).colorScheme.error),
+                      const SizedBox(width: 6),
+                      Text('Cookie 导入状态',
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleSmall
+                              ?.copyWith(fontWeight: FontWeight.w600)),
+                      const SizedBox(width: 8),
+                      Text(
+                        '未导入的平台无法使用对应下载功能，点击图标去导入',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final key in _kCookiePlatforms)
+                        _platformStateChip(context, key),
+                    ],
+                  ),
+                ],
+              ),
+              backgroundColor: Theme.of(context)
+                  .colorScheme
+                  .errorContainer
+                  .withValues(alpha: 0.35),
               actions: [
-                TextButton(onPressed: _openWizard, child: const Text('去配置')),
+                TextButton(onPressed: _openWizard, child: const Text('去导入')),
                 TextButton(
-                  onPressed: () => setState(() => _cookieBannerVisible = false),
+                  onPressed: () =>
+                      setState(() => _cookieBannerDismissed = true),
                   child: const Text('关闭'),
                 ),
               ],
@@ -116,26 +172,30 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
                   selectedIndex: _index,
                   onDestinationSelected: (i) => setState(() => _index = i),
                   labelType: NavigationRailLabelType.all,
-                  destinations: const [
-                    NavigationRailDestination(
+                  destinations: [
+                    const NavigationRailDestination(
                       icon: Icon(Icons.link),
                       selectedIcon: Icon(Icons.link),
                       label: Text('链接下载'),
                     ),
-                    NavigationRailDestination(
+                    const NavigationRailDestination(
                       icon: Icon(Icons.person),
                       selectedIcon: Icon(Icons.person),
                       label: Text('账号下载'),
                     ),
-                    NavigationRailDestination(
+                    const NavigationRailDestination(
                       icon: Icon(Icons.download_outlined),
                       selectedIcon: Icon(Icons.download_for_offline_outlined),
                       label: Text('任务'),
                     ),
                     NavigationRailDestination(
-                      icon: Icon(Icons.settings_outlined),
-                      selectedIcon: Icon(Icons.settings),
-                      label: Text('设置'),
+                      icon: Badge(
+                        isLabelVisible: _updateAvailable,
+                        smallSize: 8,
+                        child: const Icon(Icons.settings_outlined),
+                      ),
+                      selectedIcon: const Icon(Icons.settings),
+                      label: const Text('设置'),
                     ),
                   ],
                 ),
@@ -145,6 +205,60 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// 状态条上的四个平台（固定顺序）
+  static const List<String> _kCookiePlatforms = [
+    'douyin', 'tiktok', 'bili', 'youtube',
+  ];
+
+  Widget _platformStateChip(BuildContext ctx, String key) {
+    final meta = platformMeta(key);
+    final state = _cookieStatus?.platforms[key];
+    final imported = state?.imported ?? false;
+    final loggedIn = state?.loggedIn ?? false;
+    final color = imported
+        ? (loggedIn ? Colors.green : const Color(0xFFE6A23C))
+        : Theme.of(ctx).colorScheme.outline;
+    final label = imported
+        ? (loggedIn ? '已导入' : '已导入·未登录')
+        : '未导入';
+    return InkWell(
+      borderRadius: BorderRadius.circular(999),
+      onTap: imported ? null : _openWizard,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: color.withValues(alpha: 0.45)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              imported ? Icons.check_circle : Icons.radio_button_unchecked,
+              size: 14,
+              color: color,
+            ),
+            const SizedBox(width: 4),
+            Text(meta.label,
+                style: TextStyle(
+                    fontSize: 12,
+                    height: 1.0,
+                    fontWeight: FontWeight.w600,
+                    color: color)),
+            const SizedBox(width: 4),
+            Text(label,
+                style: TextStyle(fontSize: 11, height: 1.0, color: color)),
+            if (!imported) ...[
+              const SizedBox(width: 2),
+              Icon(Icons.add_circle_outline, size: 12, color: color),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -172,6 +286,15 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
                   style: Theme.of(ctx).textTheme.titleMedium,
                 ),
               ]),
+              const SizedBox(height: 16),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final key in _kCookiePlatforms)
+                    _platformStateChip(ctx, key),
+                ],
+              ),
               const SizedBox(height: 16),
               FilledButton.tonal(
                 onPressed: () {
@@ -251,6 +374,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     } catch (e) {
       if (mounted) AppToast.show(context, '导入失败：$e', success: false);
     }
+    _checkCookie();
   }
 
   Future<String?> _pickBrowserDialog(
@@ -311,5 +435,6 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     } catch (e) {
       if (mounted) AppToast.show(context, '导入失败：$e', success: false);
     }
+    _checkCookie();
   }
 }

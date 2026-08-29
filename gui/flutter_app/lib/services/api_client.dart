@@ -133,11 +133,13 @@ class ApiClient {
     required String url,
     String? formatId,
     String? label,
+    String? platform,
     String? saveDir,
   }) async {
     final result = await post('/api/gui/task', body: {
       'type': 'ytdlp',
       'url': url,
+      'platform': ?platform,
       'format_id': ?formatId,
       'label': ?label,
       'save_dir': ?saveDir,
@@ -207,6 +209,25 @@ class ApiClient {
     } catch (_) {
       return false;
     }
+  }
+
+  // ---- 应用更新 ----
+
+  Future<UpdateCheckInfo> updateCheck() async =>
+      UpdateCheckInfo.fromJson(await get('/api/gui/update/check'));
+
+  /// 在应用内下载更新包（进度在任务页可见，完成后自动打开所在文件夹）
+  Future<TaskInfo?> updateDownload(String url) async {
+    final result = await post(
+      '/api/gui/update/download',
+      body: {'url': url},
+      timeout: const Duration(seconds: 60),
+    );
+    if (result['status'] != 'success') {
+      throw ApiException(result['message']?.toString() ?? '创建下载任务失败');
+    }
+    return TaskInfo.fromJson(
+        result['task'] as Map<String, dynamic>? ?? {});
   }
 
   void dispose() => _client.close();

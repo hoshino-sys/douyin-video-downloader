@@ -19,16 +19,58 @@ class BootstrapInfo {
       );
 }
 
+class PlatformCookieState {
+  final bool imported;
+  final bool loggedIn;
+
+  const PlatformCookieState({required this.imported, required this.loggedIn});
+
+  factory PlatformCookieState.fromJson(Map<String, dynamic> json) =>
+      PlatformCookieState(
+        imported: json['imported'] as bool? ?? false,
+        loggedIn: json['logged_in'] as bool? ?? false,
+      );
+}
+
 class CookieStatus {
   final bool configured;
   final bool loggedIn;
+  final Map<String, PlatformCookieState> platforms;
 
-  const CookieStatus({required this.configured, required this.loggedIn});
+  const CookieStatus({
+    required this.configured,
+    required this.loggedIn,
+    this.platforms = const {},
+  });
 
-  factory CookieStatus.fromJson(Map<String, dynamic> json) => CookieStatus(
-        configured: json['configured'] as bool? ?? false,
-        loggedIn: json['logged_in'] as bool? ?? false,
-      );
+  /// 四个平台是否全部已导入 Cookie（旧后端无 platforms 时退回 configured）
+  bool get allImported => platforms.isEmpty
+      ? configured
+      : platforms.values.every((p) => p.imported);
+
+  /// 未导入 Cookie 的平台 key 列表
+  List<String> get missingPlatforms => platforms.entries
+      .where((e) => !e.value.imported)
+      .map((e) => e.key)
+      .toList();
+
+  factory CookieStatus.fromJson(Map<String, dynamic> json) {
+    final raw = json['platforms'];
+    final map = <String, PlatformCookieState>{};
+    if (raw is Map) {
+      raw.forEach((key, value) {
+        if (value is Map) {
+          map[key.toString()] =
+              PlatformCookieState.fromJson(Map<String, dynamic>.from(value));
+        }
+      });
+    }
+    return CookieStatus(
+      configured: json['configured'] as bool? ?? false,
+      loggedIn: json['logged_in'] as bool? ?? false,
+      platforms: map,
+    );
+  }
 }
 
 class CookieResult {
@@ -117,6 +159,8 @@ class TaskInfo {
   final String id;
   final String type;
   final String label;
+  final String title;
+  final String platform;
   final String status;
   final String message;
   final String createdAt;
@@ -129,6 +173,8 @@ class TaskInfo {
     required this.id,
     required this.type,
     required this.label,
+    this.title = '',
+    this.platform = '',
     required this.status,
     required this.message,
     required this.createdAt,
@@ -142,10 +188,30 @@ class TaskInfo {
   bool get isSuccess => status == 'success';
   bool get isFailed => status == 'failed';
 
+  /// 卡片大标题：视频标题 → 当前状态文本 → 任务名 兜底
+  String get displayTitle {
+    if (title.isNotEmpty) return title;
+    if (message.isNotEmpty) return message;
+    return label;
+  }
+
+  // 下载进度明细（ytdlp/update 任务由后端实时更新）
+  int get currentBytes => (progress['current'] as num?)?.toInt() ?? 0;
+  int get totalBytes => (progress['total'] as num?)?.toInt() ?? 0;
+  double get speedBytes => (progress['speed'] as num?)?.toDouble() ?? 0;
+  int get etaSeconds => (progress['eta'] as num?)?.toInt() ?? 0;
+
+  /// 0.0~1.0 的确定进度；总量未知时返回 null（不定态）
+  double? get progressValue => totalBytes > 0
+      ? (currentBytes / totalBytes).clamp(0.0, 1.0)
+      : null;
+
   factory TaskInfo.fromJson(Map<String, dynamic> json) => TaskInfo(
         id: json['id'] as String? ?? '',
         type: json['type'] as String? ?? '',
         label: json['label'] as String? ?? '',
+        title: json['title']?.toString() ?? '',
+        platform: json['platform']?.toString() ?? '',
         status: json['status'] as String? ?? '',
         message: json['message'] as String? ?? '',
         createdAt: json['created_at'] as String? ?? '',
@@ -155,6 +221,39 @@ class TaskInfo {
         progress: json['progress'] is Map
             ? Map<String, dynamic>.from(json['progress'] as Map)
             : const {},
+      );
+}
+
+class UpdateCheckInfo {
+  final String current;
+  final String latest;
+  final bool updateAvailable;
+  final String notes;
+  final String pageUrl;
+  final String zipUrl;
+  final String error;
+
+  const UpdateCheckInfo({
+    required this.current,
+    required this.latest,
+    required this.updateAvailable,
+    required this.notes,
+    required this.pageUrl,
+    required this.zipUrl,
+    required this.error,
+  });
+
+  bool get hasError => error.isNotEmpty;
+
+  factory UpdateCheckInfo.fromJson(Map<String, dynamic> json) =>
+      UpdateCheckInfo(
+        current: json['current']?.toString() ?? '',
+        latest: json['latest']?.toString() ?? '',
+        updateAvailable: json['update_available'] as bool? ?? false,
+        notes: json['notes']?.toString() ?? '',
+        pageUrl: json['page_url']?.toString() ?? '',
+        zipUrl: json['zip_url']?.toString() ?? '',
+        error: json['error']?.toString() ?? '',
       );
 }
 

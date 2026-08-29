@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import '../app.dart';
 import '../models.dart';
 import '../services/toast.dart';
+import '../widgets/platform_badge.dart';
 
 class TasksPage extends StatefulWidget {
   const TasksPage({super.key});
@@ -108,13 +109,44 @@ class _TaskCard extends StatelessWidget {
 
   const _TaskCard({required this.task, required this.expanded, required this.onToggle});
 
+  static String _fmtBytes(num bytes) {
+    if (bytes < 1024) return '${bytes.toStringAsFixed(0)} B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(0)} KB';
+    if (bytes < 1024 * 1024 * 1024) {
+      return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
+    }
+    return '${(bytes / 1024 / 1024 / 1024).toStringAsFixed(2)} GB';
+  }
+
+  static String _fmtDuration(int seconds) {
+    final h = seconds ~/ 3600;
+    final m = (seconds % 3600) ~/ 60;
+    final s = seconds % 60;
+    String two(int n) => n.toString().padLeft(2, '0');
+    return h > 0 ? '$h:${two(m)}:${two(s)}' : '${two(m)}:${two(s)}';
+  }
+
+  /// 运行中的进度明细行：百分比 · 已下载/总量 · 速度 · 剩余时间
+  String? get _progressDetail {
+    if (!task.isRunning) return null;
+    if (task.totalBytes > 0) {
+      final parts = <String>[
+        '${((task.currentBytes / task.totalBytes) * 100).clamp(0, 100).toStringAsFixed(1)}%',
+        '${_fmtBytes(task.currentBytes)} / ${_fmtBytes(task.totalBytes)}',
+      ];
+      if (task.speedBytes > 0) parts.add('${_fmtBytes(task.speedBytes)}/s');
+      if (task.etaSeconds > 0) parts.add('剩余 ${_fmtDuration(task.etaSeconds)}');
+      return parts.join(' · ');
+    }
+    if (task.message.isNotEmpty && task.message != task.displayTitle) {
+      return task.message;
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
-    final subtitleParts = <String>[task.createdAt];
-    if (task.message.isNotEmpty) subtitleParts.add(task.message);
-    if (!task.isRunning && task.finishedAt.isNotEmpty) {
-      subtitleParts.add('完成于 ${task.finishedAt}');
-    }
+    final detail = _progressDetail;
     return Card(
       elevation: 0,
       margin: EdgeInsets.zero,
@@ -133,8 +165,49 @@ class _TaskCard extends StatelessWidget {
               'success' => const Icon(Icons.check_circle, color: Colors.green),
               _ => Icon(Icons.error, color: Theme.of(context).colorScheme.error),
             },
-            title: Text(task.label.isEmpty ? task.type : task.label),
-            subtitle: Text(subtitleParts.join(' · '), maxLines: 2, overflow: TextOverflow.ellipsis),
+            title: Text(
+              task.displayTitle,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context)
+                  .textTheme
+                  .bodyLarge
+                  ?.copyWith(fontWeight: FontWeight.w600, height: 1.25),
+            ),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 3),
+                Row(
+                  children: [
+                    if (task.platform.isNotEmpty) ...[
+                      PlatformBadge(task.platform),
+                      const SizedBox(width: 8),
+                    ],
+                    Expanded(
+                      child: Text(
+                        task.createdAt,
+                        style: Theme.of(context).textTheme.bodySmall,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+                if (!task.isRunning &&
+                    task.message.isNotEmpty &&
+                    task.message != task.displayTitle)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      task.message,
+                      style: Theme.of(context).textTheme.bodySmall,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+              ],
+            ),
             trailing: Row(mainAxisSize: MainAxisSize.min, children: [
               if (task.downloadDir.isNotEmpty)
                 IconButton(
@@ -183,9 +256,26 @@ class _TaskCard extends StatelessWidget {
           ),
           if (task.isRunning)
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: LinearProgressIndicator(
-                backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  LinearProgressIndicator(
+                    value: task.progressValue,
+                    backgroundColor:
+                        Theme.of(context).colorScheme.surfaceContainerHighest,
+                  ),
+                  if (detail != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        detail,
+                        style: Theme.of(context).textTheme.labelSmall,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
               ),
             ),
           if (expanded) ...[

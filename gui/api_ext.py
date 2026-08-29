@@ -1,6 +1,7 @@
 from asyncio import create_task as aio_create_task
 from datetime import datetime
 from functools import lru_cache
+import os
 import threading
 import time
 from typing import TYPE_CHECKING
@@ -11,7 +12,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from src.application.main_server import token_dependency
-from src.custom import __VERSION__
+from src.custom import __VERSION__, PROJECT_ROOT
 from src.models import Settings
 from src.tools import Browser
 from gui import platforms_yt
@@ -160,16 +161,78 @@ class GuiTaskRequest(BaseModel):
     save_dir: str = ""
 
 
+class UpdateDownloadRequest(BaseModel):
+    url: str
+
+
+def _check_update() -> dict:
+    """查询 GitHub Releases 最新版本；任何失败都静默降级为无更新。"""
+    import json
+    import re
+    import urllib.request
+
+    from src.custom.internal import RELEASES, RELEASES_API, USERAGENT
+
+    result = {
+        "current": __VERSION__,
+        "latest": "",
+        "update_available": False,
+        "notes": "",
+        "page_url": RELEASES,
+        "zip_url": "",
+        "published_at": "",
+        "error": "",
+    }
+
+    def nums(text: str) -> tuple:
+        found = re.findall(r"\d+", text)
+        return tuple(int(x) for x in found[:4]) if found else (0,)
+
+    try:
+        req = urllib.request.Request(
+            RELEASES_API,
+            headers={"User-Agent": USERAGENT, "Accept": "application/vnd.github+json"},
+        )
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.load(resp)
+    except Exception as e:
+        result["error"] = f"无法连接更新服务器：{e}"[:160]
+        return result
+    tag = str(data.get("tag_name") or "").lstrip("vV")
+    result["latest"] = tag
+    result["notes"] = str(data.get("body") or "")[:1200]
+    result["published_at"] = str(data.get("published_at") or "")
+    for asset in data.get("assets") or []:
+        if str(asset.get("name") or "").lower().endswith(".zip"):
+            result["zip_url"] = str(asset.get("browser_download_url") or "")
+            break
+    result["update_available"] = bool(tag) and nums(tag) > nums(__VERSION__)
+    return result
+
+
+_RELEASE_DOWNLOAD_PREFIX = (
+    "https://github.com/hoshino-sys/douyin-video-downloader/releases/download/"
+)
+
+
 class TaskManager:
     def __init__(self):
         self._tasks: dict[str, dict] = {}
 
-    def create(self, task_type: str, label: str) -> dict:
+    def create(
+        self,
+        task_type: str,
+        label: str,
+        title: str = "",
+        platform: str = "",
+    ) -> dict:
         task_id = uuid4().hex[:12]
         task = {
             "id": task_id,
             "type": task_type,
             "label": label,
+            "title": title,
+            "platform": platform,
             "status": "running",
             "message": "",
             "created_at": datetime.now().isoformat(timespec="seconds"),
@@ -194,12 +257,28 @@ class TaskManager:
             if t.get("status") == "running":
                 self.append_log(t, text)
 
-    def set_progress(self, task: dict, current: int, total: int, message: str = "") -> None:
-        task["progress"] = {
+    def set_meta(self, task: dict, **fields) -> None:
+        for key, value in fields.items():
+            if value:
+                task[key] = value
+
+    def set_progress(
+        self,
+        task: dict,
+        current: int,
+        total: int,
+        message: str = "",
+        speed: float | None = None,
+        eta: float | None = None,
+    ) -> None:
+        progress = {
             "current": current,
             "total": total,
             "percent": int(current * 100 / total) if total else 0,
+            "speed": speed,
+            "eta": eta,
         }
+        task["progress"] = progress
         if message:
             task["message"] = message
 
@@ -316,9 +395,11 @@ def setup_gui_routes(server: "APIServer", app: "TikTokDownloader") -> None:
     @fast_app.get("/api/gui/cookie/status", tags=[GUI_TAG])
     async def cookie_status():
         parameter = server.parameter
+        platforms = platforms_yt.platform_cookie_states(parameter)
         return {
-            "configured": bool(parameter.cookie_dict or parameter.cookie_str),
+            "configured": any(v["imported"] for v in platforms.values()),
             "logged_in": bool(parameter.cookie_state),
+            "platforms": platforms,
         }
 
     @fast_app.get("/api/gui/cookie/browsers", tags=[GUI_TAG])
@@ -448,7 +529,12 @@ def setup_gui_routes(server: "APIServer", app: "TikTokDownloader") -> None:
                 custom_dir = _resolve_save_dir(req.save_dir)
             except Exception as e:
                 return {"status": "failed", "message": f"保存目录无效：{e}"}
-            task = tasks.create("detail", req.label or "单作品下载")
+            task = tasks.create(
+                "detail",
+                req.label or "单作品下载",
+                title=str(req.data.get("desc") or "")[:100],
+                platform="tiktok" if is_tiktok else "douyin",
+            )
             task["download_dir"] = str(
                 custom_dir or server.parameter.root.resolve()
             )
@@ -487,7 +573,11 @@ def setup_gui_routes(server: "APIServer", app: "TikTokDownloader") -> None:
                 custom_dir = _resolve_save_dir(req.save_dir)
             except Exception as e:
                 return {"status": "failed", "message": f"保存目录无效：{e}"}
-            task = tasks.create("account", req.label or "账号作品批量下载")
+            task = tasks.create(
+                "account",
+                req.label or "账号作品批量下载",
+                platform="tiktok" if is_tiktok else "douyin",
+            )
             task["download_dir"] = str(
                 custom_dir or server.parameter.root.resolve()
             )
@@ -537,7 +627,15 @@ def setup_gui_routes(server: "APIServer", app: "TikTokDownloader") -> None:
                 custom_dir = _resolve_save_dir(req.save_dir)
             except Exception as e:
                 return {"status": "failed", "message": f"保存目录无效：{e}"}
-            task = tasks.create("ytdlp", req.label or "B站/YouTube 下载")
+            ytdlp_platform = req.platform.lower()
+            if ytdlp_platform not in ("bili", "youtube"):
+                detected = platforms_yt.detect_platform(req.url.strip())
+                ytdlp_platform = detected[0] if detected else ytdlp_platform
+            task = tasks.create(
+                "ytdlp",
+                req.label or "B站/YouTube 下载",
+                platform=ytdlp_platform,
+            )
             root = custom_dir or server.parameter.root.resolve()
             task["download_dir"] = str(root)
             tasks.append_log(task, f"链接：{req.url.strip()[:120]}")
@@ -602,3 +700,87 @@ def setup_gui_routes(server: "APIServer", app: "TikTokDownloader") -> None:
             return {"success": True}
         except Exception as e:
             return {"success": False, "message": str(e)}
+
+    @fast_app.get("/api/gui/update/check", tags=[GUI_TAG])
+    async def update_check(token: str = Depends(token_dependency)):
+        return await asyncio.to_thread(_check_update)
+
+    @fast_app.post("/api/gui/update/download", tags=[GUI_TAG])
+    async def update_download(
+        req: UpdateDownloadRequest, token: str = Depends(token_dependency)
+    ):
+        import subprocess
+        import urllib.request
+        from pathlib import Path
+
+        from src.custom.internal import USERAGENT
+
+        url = req.url.strip()
+        if not url.startswith(_RELEASE_DOWNLOAD_PREFIX):
+            return {"status": "failed", "message": "下载地址不受信任"}
+
+        filename = url.rsplit("/", 1)[-1] or "update.zip"
+        target_dir = Path.home() / "Downloads"
+        if not target_dir.exists():
+            target_dir = PROJECT_ROOT.joinpath("downloads")
+        target_dir.mkdir(parents=True, exist_ok=True)
+        dest = target_dir / filename
+
+        task = tasks.create("update", "更新包下载")
+        task["download_dir"] = str(target_dir)
+        tasks.append_log(task, f"开始下载更新包：{filename}")
+
+        def work() -> None:
+            request = urllib.request.Request(
+                url, headers={"User-Agent": USERAGENT}
+            )
+            with urllib.request.urlopen(request, timeout=60) as resp, open(
+                dest, "wb"
+            ) as fh:
+                total = int(resp.headers.get("Content-Length") or 0)
+                done = 0
+                start = time.time()
+                last_tick = 0.0
+                while True:
+                    chunk = resp.read(262144)
+                    if not chunk:
+                        break
+                    fh.write(chunk)
+                    done += len(chunk)
+                    now = time.time()
+                    if now - last_tick >= 0.5:
+                        elapsed = max(now - start, 0.001)
+                        speed = done / elapsed
+                        eta = (total - done) / speed if total and speed else None
+                        tasks.set_progress(
+                            task,
+                            done,
+                            total,
+                            message=filename,
+                            speed=speed,
+                            eta=eta,
+                        )
+                        last_tick = now
+
+        def finalize() -> None:
+            tasks.set_progress(task, 1, 1, message="下载完成")
+            tasks.append_log(task, f"已保存到：{dest}")
+            tasks.append_log(task, "更新方法：退出本程序后，解压该压缩包覆盖原目录")
+            try:
+                if os.name == "nt":
+                    subprocess.Popen(["explorer.exe", "/select", str(dest)])
+            except Exception:
+                pass
+            tasks.finish(task, True, "更新包下载完成，退出应用后解压覆盖即可更新")
+
+        async def run_update() -> None:
+            try:
+                await asyncio.to_thread(work)
+                finalize()
+            except Exception as e:
+                message = f"更新包下载失败：{e}"[:200]
+                tasks.append_log(task, message)
+                tasks.finish(task, False, message)
+
+        aio_create_task(run_update())
+        return {"status": "success", "task": task}

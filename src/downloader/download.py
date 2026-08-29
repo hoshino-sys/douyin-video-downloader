@@ -252,7 +252,7 @@ class Downloader:
             download_command,
         )
         self.console.info(
-            _("程序将会调用 ffmpeg 下载直播，关闭 DouK-Downloader 不会中断下载！"),
+            _("程序将会调用 ffmpeg 下载直播，关闭 夜星视频下载器 不会中断下载！"),
         )
         self.__download_live(download_command, tiktok)
 

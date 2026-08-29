@@ -1,7 +1,7 @@
 from textwrap import dedent
 from typing import TYPE_CHECKING
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Body
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from uvicorn import Config, Server
@@ -99,7 +99,7 @@ class APIServer(TikTok):
     ):
         self.server = FastAPI(
             debug=VERSION_BETA,
-            title="DouK-Downloader",
+            title="夜星视频下载器",
             version=__VERSION__,
         )
         from pathlib import Path
@@ -121,7 +121,7 @@ class APIServer(TikTok):
         @self.server.get(
             "/",
             summary=_("WebUI 首页"),
-            description=_("DouK-Downloader WebUI"),
+            description=_("夜星视频下载器 WebUI"),
             tags=[_("页面")],
             response_class=HTMLResponse,
         )

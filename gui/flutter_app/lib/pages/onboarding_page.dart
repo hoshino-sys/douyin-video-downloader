@@ -105,7 +105,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
                 const Icon(Icons.gavel_outlined),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: Text('欢迎使用 DouK 下载器',
+                  child: Text('欢迎使用夜星视频下载器',
                       style: Theme.of(context).textTheme.titleLarge),
                 ),
               ],

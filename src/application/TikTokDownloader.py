@@ -281,7 +281,7 @@ class TikTokDownloader:
             self.__update_menu()
             if not mode:
                 mode = choose(
-                    _("DouK-Downloader 功能选项"),
+                    _("夜星视频下载 功能选项"),
                     [i for i, __ in self.__function_menu],
                     self.console,
                     separate=(

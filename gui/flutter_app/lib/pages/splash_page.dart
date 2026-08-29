@@ -19,6 +19,7 @@ class _SplashPageState extends State<SplashPage> {
   String _statusText = '正在启动后端服务…';
   String? _error;
   String? _logTail;
+  String _version = '';
 
   @override
   void initState() {
@@ -59,6 +60,9 @@ class _SplashPageState extends State<SplashPage> {
       App.backend = backend;
       App.client = client;
       if (!mounted) return;
+      setState(() => _version = info.version);
+      await Future.delayed(const Duration(milliseconds: 600));
+      if (!mounted) return;
       Navigator.of(context).pushReplacement(MaterialPageRoute(
         builder: (_) => (info.disclaimerAccepted && info.cookieConfigured)
             ? HomeShell(cookieLoggedIn: info.cookieLoggedIn)
@@ -94,6 +98,18 @@ class _SplashPageState extends State<SplashPage> {
                         '夜星视频下载器',
                         style: Theme.of(context).textTheme.headlineSmall,
                       ),
+                      if (_version.isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          'v$_version',
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodySmall
+                              ?.copyWith(
+                                  color:
+                                      Theme.of(context).colorScheme.outline),
+                        ),
+                      ],
                       const SizedBox(height: 32),
                       const CircularProgressIndicator(),
                       const SizedBox(height: 16),

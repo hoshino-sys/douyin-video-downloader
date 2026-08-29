@@ -226,6 +226,7 @@ class _LinkDownloadPageState extends State<LinkDownloadPage>
         url: _inputController.text.trim(),
         formatId: p.isBatch ? null : _selectedHeight,
         label: '${p.platformName}${p.isBatch ? '列表' : ''}下载',
+        platform: p.platform,
         saveDir: _saveDir,
       );
       if (!mounted) return;
@@ -365,6 +366,7 @@ class _LinkDownloadPageState extends State<LinkDownloadPage>
           await App.client!.createYtdlpTask(
             url: raw,
             label: platform == 'bili' ? 'B站下载' : 'YouTube下载',
+            platform: platform,
             saveDir: _saveDir,
           );
           if (!mounted) return;

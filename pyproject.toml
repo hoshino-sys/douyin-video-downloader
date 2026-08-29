@@ -1,6 +1,6 @@
 [project]
 name = "yexing-video-downloader"
-version = "5.8"
+version = "5.9"
 description = "夜星视频下载 (yexing-video-downloader) - 抖音/TikTok/Bilibili/YouTube 视频与图集采集与批量下载工具"
 authors = [
     { name = "yexing", email = "19860620884@163.com" },

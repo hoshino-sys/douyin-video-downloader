@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../app.dart';
+import '../models.dart';
 import '../services/theme_controller.dart';
+import '../services/toast.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -17,11 +19,16 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _saving = false;
   String? _error;
   String? _savedHint;
+  String _version = '';
+  UpdateCheckInfo? _update;
+  bool _checkingUpdate = false;
 
   @override
   void initState() {
     super.initState();
     _load();
+    _loadVersion();
+    _checkUpdate(silent: true);
   }
 
   @override
@@ -50,6 +57,100 @@ class _SettingsPageState extends State<SettingsPage> {
       setState(() => _error = e.toString());
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _loadVersion() async {
+    try {
+      final info = await App.client!.bootstrap();
+      if (!mounted) return;
+      setState(() => _version = info.version);
+    } catch (_) {}
+  }
+
+  Future<void> _checkUpdate({bool silent = false}) async {
+    setState(() => _checkingUpdate = true);
+    try {
+      final info = await App.client!.updateCheck();
+      if (!mounted) return;
+      setState(() => _update = info);
+      if (!silent) {
+        if (info.hasError) {
+          AppToast.show(context, info.error, success: false);
+        } else if (!info.updateAvailable) {
+          AppToast.show(context, '已是最新版本 v${info.current}');
+        }
+      }
+    } catch (e) {
+      if (!silent && mounted) {
+        AppToast.show(context, '检查更新失败：$e', success: false);
+      }
+    } finally {
+      if (mounted) setState(() => _checkingUpdate = false);
+    }
+  }
+
+  Future<void> _confirmUpdate() async {
+    final info = _update;
+    if (info == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('发现新版本 v${info.latest}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('当前版本：v${info.current}'),
+            const SizedBox(height: 4),
+            Text('最新版本：v${info.latest}'),
+            if (info.zipUrl.isEmpty) ...[
+              const SizedBox(height: 12),
+              Text('未在发布页找到可下载的更新包，请到发布页手动下载：\n${info.pageUrl}',
+                  style: Theme.of(ctx).textTheme.bodySmall),
+            ] else ...[
+              if (info.notes.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 200),
+                  child: SingleChildScrollView(
+                    child: SelectableText(
+                      info.notes,
+                      style: Theme.of(ctx).textTheme.bodySmall,
+                    ),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 12),
+              Text(
+                '点击「在应用内下载」开始下载更新包（可在任务页查看进度）；'
+                '下载完成后退出本程序，解压压缩包覆盖原目录即可完成更新。',
+                style: Theme.of(ctx).textTheme.bodySmall,
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          if (info.zipUrl.isNotEmpty)
+            FilledButton.icon(
+              icon: const Icon(Icons.download_outlined, size: 18),
+              label: const Text('在应用内下载'),
+              onPressed: () => Navigator.pop(ctx, true),
+            ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await App.client!.updateDownload(info.zipUrl);
+      if (!mounted) return;
+      AppToast.show(context, '已开始下载更新包，可在「任务」页查看进度');
+    } catch (e) {
+      if (mounted) AppToast.show(context, '创建下载任务失败：$e', success: false);
     }
   }
 
@@ -150,6 +251,59 @@ class _SettingsPageState extends State<SettingsPage> {
                   const SizedBox(height: 4),
                   Text('默认跟随系统，重启后生效', style: Theme.of(context).textTheme.bodySmall),
                 ]),
+              ),
+            ),
+            const SizedBox(height: 16),
+            _sectionHeader(context, Icons.info_outline, '关于'),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  children: [
+                    Icon(Icons.smart_display_outlined,
+                        color: Theme.of(context).colorScheme.primary),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('夜星视频下载器',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .titleSmall
+                                  ?.copyWith(fontWeight: FontWeight.w600)),
+                          const SizedBox(height: 2),
+                          Text(
+                            _version.isEmpty
+                                ? '版本号获取中…'
+                                : (_update?.updateAvailable == true
+                                    ? '版本 $_version（可更新到 ${_update!.latest}）'
+                                    : '版本 $_version'),
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    if (_checkingUpdate)
+                      const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child:
+                              CircularProgressIndicator(strokeWidth: 2))
+                    else if (_update?.updateAvailable == true)
+                      FilledButton.icon(
+                        icon: const Icon(Icons.system_update_alt, size: 18),
+                        label: Text('更新到 ${_update!.latest}'),
+                        onPressed: _confirmUpdate,
+                      )
+                    else
+                      OutlinedButton(
+                        onPressed: () => _checkUpdate(),
+                        child: const Text('检查更新'),
+                      ),
+                  ],
+                ),
               ),
             ),
             const SizedBox(height: 16),
