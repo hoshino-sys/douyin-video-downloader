@@ -18,5 +18,8 @@ gui/flutter_app/.dart_tool/
 /backend_of.spec
 /temp_custom_dl/
 /dist/
-/vendor/
+/vendor/*
+!/vendor/qjs/
+/vendor/qjs/*
+!/vendor/qjs/qjs.exe
 /.zcode/

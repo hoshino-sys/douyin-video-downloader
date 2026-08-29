@@ -98,6 +98,24 @@ def find_ffmpeg() -> str | None:
     return None
 
 
+def find_qjs() -> str | None:
+    """查找内置/系统的 quickjs(qjs) 可执行文件，供 yt-dlp 求解 YouTube JS 挑战。
+
+    yt-dlp 的 _find_exe 冻结时只搜 exe 同级目录和 PATH，不搜 _internal，
+    因此必须把显式 path 传进 js_runtimes 选项。
+    """
+    for c in _ffmpeg_search_dirs():
+        for name in ("qjs.exe", "qjs"):
+            if (c / name).exists():
+                return str(c / name)
+    found = shutil.which("qjs")
+    return found
+
+
+# 最近一次 yt-dlp 运行是否报告过"缺少 JS 运行时"（用于区分风控原因）
+_RUNTIME_MISSING = False
+
+
 def save_platform_cookie(
     target: str,
     browser_name: str,
@@ -173,6 +191,15 @@ def _client_opts(client: str | None) -> dict:
 
 
 def _base_opts(logger_cb: Callable[[str], None]) -> dict:
+    global _RUNTIME_MISSING
+    _RUNTIME_MISSING = False
+    # yt-dlp 默认只启用 deno；显式开启全部运行时探测，
+    # 否则机器上只有 node/bun 时无法解 YouTube 的 JS 挑战
+    # quickjs 传内置 qjs 的显式路径：新机器上没有任何系统运行时时作为兜底
+    # （yt-dlp 固定优先级 deno > node > quickjs > bun，装有 node/deno 的机器不受影响）
+    runtimes: dict[str, dict] = {"deno": {}, "node": {}, "bun": {}}
+    qjs = find_qjs()
+    runtimes["quickjs"] = {"path": qjs} if qjs else {}
     opts = {
         "quiet": True,
         "no_warnings": True,
@@ -180,9 +207,7 @@ def _base_opts(logger_cb: Callable[[str], None]) -> dict:
         "socket_timeout": 30,
         "retries": 5,
         "logger": _YtdlpLogger(logger_cb),
-        # yt-dlp 默认只启用 deno；显式开启全部运行时探测，
-        # 否则机器上只有 node/bun 时无法解 YouTube 的 JS 挑战
-        "js_runtimes": {"deno": {}, "node": {}, "bun": {}, "quickjs": {}},
+        "js_runtimes": runtimes,
     }
     return opts
 
@@ -198,7 +223,15 @@ class _YtdlpLogger:
         self._cb(str(msg))
 
     def warning(self, msg: str) -> None:
-        self._cb(f"[警告] {msg}")
+        global _RUNTIME_MISSING
+        text = str(msg)
+        if (
+            "No supported JavaScript runtime could be found" in text
+            or "challenge solving failed" in text
+            or "Signature solving failed" in text
+        ):
+            _RUNTIME_MISSING = True
+        self._cb(f"[警告] {text}")
 
     def error(self, msg: str) -> None:
         self._cb(f"[错误] {msg}")
@@ -457,6 +490,12 @@ def _friendly_error(e: Exception | str) -> str:
             "也可能是当前网络被 YouTube 风控，可更换网络后重试"
         )
     if login_wall or ("age" in text.lower() and "restrict" in text.lower()):
+        if _RUNTIME_MISSING:
+            return (
+                "本机缺少可用的 JavaScript 运行时（内置 qjs 未找到或不可用），"
+                "无法完成 YouTube 解析。安装包可能不完整，"
+                "请重新解压安装包后重试"
+            )
         if _cookie_path("youtube") is not None:
             return (
                 "已导入 Cookie 但仍触发 YouTube 风控验证，"

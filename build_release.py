@@ -26,6 +26,7 @@ REL = ROOT / "release" / RELEASE_DIR_NAME
 DIST_BACKEND = ROOT / "dist" / "backend"
 FLUTTER_RELEASE = ROOT / "gui" / "flutter_app" / "build" / "windows" / "x64" / "runner" / "Release"
 VENDOR_FFMPEG = ROOT / "vendor" / "ffmpeg"
+VENDOR_QJS = ROOT / "vendor" / "qjs" / "qjs.exe"
 APP_EXE = "夜星视频下载器.exe"
 
 # 前端文件改名映射（douk_gui.exe → 夜星视频下载器.exe）
@@ -73,6 +74,16 @@ def ensure_vendor_ffmpeg() -> None:
     fail("缺少 vendor/ffmpeg/ffmpeg.exe（音视频合并必需），请先放置该文件")
 
 
+def ensure_vendor_qjs() -> None:
+    if VENDOR_QJS.exists():
+        return
+    fail(
+        "缺少 vendor/qjs/qjs.exe（内置 JS 运行时，新电脑解析 YouTube 必需）。"
+        "请从 https://github.com/quickjs-ng/quickjs/releases 下载"
+        " qjs-windows-x86_64.exe 并改名为 qjs.exe 放入 vendor/qjs/"
+    )
+
+
 def build_backend() -> None:
     log("== [1/4] PyInstaller 构建后端…")
     result = subprocess.run(
@@ -84,6 +95,11 @@ def build_backend() -> None:
     internal = DIST_BACKEND / "_internal"
     if not (internal / "yt_dlp_ejs").exists():
         fail("后端产物缺少 yt_dlp_ejs（JS 挑战求解脚本），请检查 backend.spec")
+    if not (internal / "qjs.exe").exists():
+        fail(
+            "后端产物缺少 qjs.exe（内置 JS 运行时），"
+            "无 node/deno 的电脑将无法解析 YouTube，请检查 backend.spec"
+        )
     if not (internal / "ffmpeg.exe").exists():
         log("[警告] 后端产物未内置 ffmpeg.exe（不影响根目录 ffmpeg 的查找）")
 
@@ -256,6 +272,7 @@ def main() -> None:
         fail(f"未找到发布目录 {REL}")
     check_no_running()
     ensure_vendor_ffmpeg()
+    ensure_vendor_qjs()
     build_backend()
     build_frontend()
     assemble_backend()
