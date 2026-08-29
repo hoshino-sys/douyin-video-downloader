@@ -3,7 +3,6 @@ from typing import TYPE_CHECKING
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import RedirectResponse, HTMLResponse
-from fastapi.staticfiles import StaticFiles
 from uvicorn import Config, Server
 from pydantic import BaseModel
 
@@ -102,11 +101,6 @@ class APIServer(TikTok):
             title="夜星视频下载器",
             version=__VERSION__,
         )
-        from pathlib import Path
-        web_ui_path = Path("src/web_ui")
-        if (web_ui_path / "static").exists():
-             self.server.mount("/static", StaticFiles(directory=web_ui_path / "static"), name="static")
-
         self.setup_routes()
         config = Config(
             self.server,

@@ -21,7 +21,7 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-RELEASE_DIR_NAME = "夜星视频下载器_v5.9"
+RELEASE_DIR_NAME = "夜星视频下载器_v5.9.1"
 REL = ROOT / "release" / RELEASE_DIR_NAME
 DIST_BACKEND = ROOT / "dist" / "夜星视频下载器后端"
 FLUTTER_RELEASE = ROOT / "gui" / "flutter_app" / "build" / "windows" / "x64" / "runner" / "Release"
@@ -194,6 +194,16 @@ def write_launch_bat() -> None:
     bat.write_text(content, encoding="utf-8-sig", newline="\r\n")
 
 
+def write_readme_txt() -> None:
+    # 说明.txt 单一来源在仓库根，组装时转 utf-8-sig/CRLF 复制进发布目录
+    src = ROOT / "说明.txt"
+    if not src.exists():
+        log("警告: 仓库根缺少 说明.txt，发布目录将沿用旧文件")
+        return
+    text = src.read_text(encoding="utf-8-sig")
+    (REL / "说明.txt").write_text(text, encoding="utf-8-sig", newline="\r\n")
+
+
 def assemble_frontend() -> None:
     for item in FLUTTER_RELEASE.iterdir():
         if item.is_dir():
@@ -338,6 +348,7 @@ def main() -> None:
     sync_fallback_sources()
     copy_ffmpeg()
     write_launch_bat()
+    write_readme_txt()
     log(f"打包完成: {REL}")
     if args.zip:
         make_zip()
