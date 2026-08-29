@@ -200,9 +200,8 @@ def _check_update() -> dict:
         # 回退抓 releases/latest 页面重定向（HTML 不占 API 限额），只有版本号、无说明
         tag = ""
         try:
-            req = urllib.request.Request(
-                f"{RELEASES}/latest", headers={"User-Agent": USERAGENT}
-            )
+            # RELEASES 常量即 releases/latest 页面，访问后由 GitHub 重定向到 /tag/vX.Y.Z
+            req = urllib.request.Request(RELEASES, headers={"User-Agent": USERAGENT})
             with urllib.request.urlopen(req, timeout=8) as resp:
                 m = re.search(r"/tag/v?([0-9][\d.]*)", resp.geturl() or "")
                 if m:
