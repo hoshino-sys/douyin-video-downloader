@@ -716,7 +716,11 @@ class _YtdlpPreviewCard extends StatelessWidget {
                   ? Icon(preview.platform == 'bili'
                       ? Icons.live_tv_outlined
                       : Icons.ondemand_video_outlined)
-                  : Image.network(preview.thumbnail,
+                  : Image.network(
+                      // YouTube 封面在 i.ytimg.com，直连不可达，经后端代理加载
+                      preview.platform == 'youtube'
+                          ? App.client!.thumbnailUrl(preview.thumbnail)
+                          : preview.thumbnail,
                       fit: BoxFit.cover,
                       errorBuilder: (_, _, _) =>
                           const Icon(Icons.image_not_supported_outlined)),

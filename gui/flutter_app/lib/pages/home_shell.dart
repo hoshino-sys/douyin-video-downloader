@@ -296,13 +296,18 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
       final result =
           await App.client!.cookieFromBrowser(browser, target: target);
       if (!mounted) return;
-      AppToast.show(
-        context,
-        result.success
-            ? '$platformName Cookie 导入成功'
-            : result.message,
-        success: result.success,
-      );
+      if (!result.success) {
+        AppToast.show(context, result.message, success: false);
+      } else if (result.loggedIn) {
+        AppToast.show(context, '$platformName Cookie 导入成功（已检测到登录态）');
+      } else {
+        AppToast.show(
+          context,
+          '$platformName Cookie 已写入，但未检测到登录态：'
+          '请先在浏览器登录$platformName并完全关闭浏览器后重新导入',
+          success: false,
+        );
+      }
     } catch (e) {
       if (mounted) AppToast.show(context, '导入失败：$e', success: false);
     }

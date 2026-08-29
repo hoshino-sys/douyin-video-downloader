@@ -74,6 +74,9 @@ class TikTokDownloader:
         self.config = None
         self.option = None
         self.__function_menu = None
+        # GUI 版布局固定（程序根目录的 data 是 Flutter 资源目录），
+        # 置 True 跳过 check_settings 内的旧版目录迁移，避免误搬导致启动崩溃
+        self.skip_folder_migration = False
 
     @staticmethod
     def rename_compatible():
@@ -396,7 +399,8 @@ class TikTokDownloader:
             **self.settings.read(),
             recorder=self.recorder,
         )
-        MigrateFolder(self.parameter).compatible()
+        if not self.skip_folder_migration:
+            MigrateFolder(self.parameter).compatible()
         self.parameter.set_headers_cookie()
         self.restart_cycle_task(
             restart,

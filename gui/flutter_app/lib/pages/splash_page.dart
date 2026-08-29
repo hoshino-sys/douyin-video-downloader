@@ -42,7 +42,17 @@ class _SplashPageState extends State<SplashPage> {
       setState(() => _statusText = '正在等待后端就绪…（首次启动可能较慢）');
       final healthy = await backend.waitHealthy();
       if (!healthy) {
-        throw BackendException('后端服务启动超时或异常退出\n\n${backend.logBuffer.take(8).join('\n')}');
+        final logs = backend.logBuffer;
+        final tail = logs.length > 40 ? logs.sublist(logs.length - 40) : logs;
+        throw BackendException(
+          '后端服务启动超时或异常退出。常见原因（按概率排序）：\n'
+          '1) 杀毒软件（360/Defender 等）隔离了 backend 目录内的文件：'
+          '请恢复被隔离文件，或将本程序目录加入杀软白名单后重新解压；\n'
+          '2) 压缩包解压不完整或经 QQ/微信中转损坏：请重新获取并完整解压；\n'
+          '3) 程序路径含中文/特殊字符且系统非中文区域：'
+          '把整个文件夹移动到纯英文路径（如 D:\\yx_dl）后再试。\n'
+          '—— 以下为后端日志（末尾行）——\n${tail.join('\n')}',
+        );
       }
       final client = ApiClient(baseUrl: 'http://127.0.0.1:${backend.port}');
       final info = await client.bootstrap();

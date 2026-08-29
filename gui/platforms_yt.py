@@ -73,8 +73,7 @@ def detect_platform(url: str) -> tuple[str, str] | None:
     return None
 
 
-def find_ffmpeg() -> str | None:
-    """按 应用根目录(DOUK_HOME) → exe 目录 → exe 上级 → PATH 顺序查找 ffmpeg。"""
+def _ffmpeg_search_dirs() -> list[Path]:
     candidates: list[Path] = []
     home = os.environ.get("DOUK_HOME")
     if home:
@@ -82,10 +81,18 @@ def find_ffmpeg() -> str | None:
     if getattr(sys, "frozen", False):
         exe_dir = Path(sys.executable).resolve().parent
         candidates.extend([exe_dir, exe_dir.parent])
+    bundle = getattr(sys, "_MEIPASS", "")
+    if bundle:
+        candidates.append(Path(bundle))
     found = shutil.which("ffmpeg")
     if found:
         candidates.append(Path(found).parent)
-    for c in candidates:
+    return candidates
+
+
+def find_ffmpeg() -> str | None:
+    """按 应用根目录(DOUK_HOME) → exe 目录 → exe 上级 → 打包目录(_internal) → PATH 顺序查找 ffmpeg。"""
+    for c in _ffmpeg_search_dirs():
         if (c / "ffmpeg.exe").exists() or (c / "ffmpeg").exists():
             return str(c)
     return None
@@ -115,7 +122,7 @@ def save_platform_cookie(
             "success": False,
             "message": f"未读取到 {platform_name} Cookie，请确认已在浏览器登录并关闭浏览器后重试",
         }
-    path = _write_cookie_file(target, cookie_dict)
+    _write_cookie_file(target, cookie_dict)
     logged_in = any(k in cookie_dict for k in _COOKIE_LOGIN_KEYS[target])
     return {"success": True, "count": len(cookie_dict), "logged_in": logged_in}
 
@@ -173,6 +180,9 @@ def _base_opts(logger_cb: Callable[[str], None]) -> dict:
         "socket_timeout": 30,
         "retries": 5,
         "logger": _YtdlpLogger(logger_cb),
+        # yt-dlp 默认只启用 deno；显式开启全部运行时探测，
+        # 否则机器上只有 node/bun 时无法解 YouTube 的 JS 挑战
+        "js_runtimes": {"deno": {}, "node": {}, "bun": {}, "quickjs": {}},
     }
     return opts
 
@@ -230,11 +240,7 @@ async def extract_preview(url: str, platform: str, kind: str) -> dict:
         )
     except Exception as e:
         message = str(e)
-        if (
-            platform == "youtube"
-            and _is_bot_check(message)
-            and _cookie_path("youtube") is None
-        ):
+        if platform == "youtube" and _is_bot_check(message):
             last = e
             for client in _FALLBACK_CLIENTS:
                 try:
@@ -346,9 +352,12 @@ async def run_ytdlp_download(
 
     ffmpeg = find_ffmpeg()
     if not ffmpeg:
+        searched = "、".join(str(c) for c in _ffmpeg_search_dirs())
         message = (
-            "未找到 ffmpeg（合并音视频必需）。请将 ffmpeg 所在目录加入 PATH，"
-            "或把 ffmpeg.exe 放到程序目录下后重试"
+            f"未找到 ffmpeg（合并音视频必需）。已查找：{searched}。"
+            "请把 ffmpeg.exe 放到以上任一目录后重试；"
+            "若目录中确有 ffmpeg.exe 却仍报错，"
+            "多半是被杀毒软件（360/Defender）隔离了，请恢复该文件或重新解压程序"
         )
         log(f"任务异常：{message}")
         tasks_mgr.finish(task, False, message)
@@ -434,13 +443,30 @@ def _friendly_error(e: Exception | str) -> str:
         return "暂不支持该链接（yt-dlp 无法解析此地址）"
     if "Private video" in text or "members-only" in text:
         return "该内容为私有或会员专享，需要对应权限的 Cookie"
-    if _is_bot_check(text) or (
-        "age" in text.lower() and "restrict" in text.lower()
-    ):
+    login_wall = any(
+        m in text
+        for m in (
+            "Sign in to confirm",
+            "not a bot",
+            "The page needs to be reloaded",
+        )
+    )
+    if not login_wall and "This content isn't available" in text:
+        return (
+            "视频不可用或访问受限：可能已被删除、设为私享或存在地区限制，"
+            "也可能是当前网络被 YouTube 风控，可更换网络后重试"
+        )
+    if login_wall or ("age" in text.lower() and "restrict" in text.lower()):
+        if _cookie_path("youtube") is not None:
+            return (
+                "已导入 Cookie 但仍触发 YouTube 风控验证，"
+                "通常是当前网络/代理 IP 被 YouTube 风控"
+                "（Cookie 本身可能有效）。建议更换网络环境或代理节点后重试；"
+                "Cookie 导入已久的话也可尝试重新导入"
+            )
         return (
             "YouTube 风控验证：需要登录态。请点击右上角钥匙图标 →"
             "「一键导入全部 Cookie」或「导入YouTube Cookie」"
-            "（导入前先完全关闭浏览器）后重试；"
-            "已导入则说明该 Cookie 已失效，请重新导入"
+            "（导入前先完全关闭浏览器）后重试"
         )
     return text[:300]

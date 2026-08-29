@@ -4,9 +4,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.joinpath("Volume")
 PROJECT_ROOT.mkdir(exist_ok=True)
 VERSION_MAJOR = 5
 VERSION_MINOR = 8
-VERSION_BETA = True
-__VERSION__ = f"{VERSION_MAJOR}.{VERSION_MINOR}.{'beta' if VERSION_BETA else 'stable'}"
-PROJECT_NAME = f"夜星视频下载器 V{VERSION_MAJOR}.{VERSION_MINOR} {'Beta' if VERSION_BETA else 'Stable'}"
+VERSION_PATCH = 1
+VERSION_BETA = False
+__VERSION__ = f"{VERSION_MAJOR}.{VERSION_MINOR}.{VERSION_PATCH}"
+PROJECT_NAME = f"夜星视频下载器 V{VERSION_MAJOR}.{VERSION_MINOR}.{VERSION_PATCH}"
 
 REPOSITORY = "https://github.com/JoeanAmier/TikTokDownloader"
 LICENCE = "GNU General Public License v3.0"

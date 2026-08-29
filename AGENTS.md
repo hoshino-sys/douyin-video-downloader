@@ -1,6 +1,6 @@
 # AGENTS.md - 抖音视频下载 (douyin-video-downloader)
 
-> Stack: Python 3.12 (hard cap `<3.13`), FastAPI + uvicorn, httpx, aiosqlite, Flutter 3.47/Dart 3.13 (Windows desktop). Entrypoint `main.py` -> `src/application/TikTokDownloader.py`. Original: DouK-Downloader / TikTokDownloader.
+> Stack: Python 3.12 (hard cap `<3.13`), FastAPI + uvicorn, httpx, aiosqlite, yt-dlp + yt-dlp-ejs (B站/YouTube), Flutter 3.47/Dart 3.13 (Windows desktop). Entrypoint `main.py` -> `src/application/TikTokDownloader.py`. Fork of DouK-Downloader / TikTokDownloader, rebranded 夜星视频下载器, version `5.8.1` (`src/custom/internal.py`).
 
 ## Commands
 
@@ -30,21 +30,26 @@ flutter analyze
 flutter test
 flutter build windows --debug                      # -> build/windows/x64/runner/Debug/douk_gui.exe
 flutter run -d windows                             # spawns Python backend automatically
+
+# Package release (MANDATORY after every change - user only runs the packaged build)
+D:/Python 3.12/python.exe build_release.py --zip   # pyinstaller + flutter build + assemble release/ + smoke-tested zip
 ```
+
+Build env note: system `D:/Python 3.12/python.exe` has all deps (PyInstaller 6.20, ruff, yt-dlp-ejs); `.venv` is broken. Packaging needs `vendor/ffmpeg/ffmpeg.exe`+`ffprobe.exe` (source binaries, copied into backend via spec).
 
 ## Structure
 
 - `main.py` / `src/application/TikTokDownloader.py:49` - orchestrator, owns `Settings` + `Parameter` + `Database`. `run()` = `project_info -> check_config -> check_settings -> disclaimer -> main_menu`.
 - `src/application/main_terminal.py:119` - `TikTok` class, all download flows (`deal_account_detail:538`, `deal_mix_detail:1653`, `downloader.run`).
 - `src/application/main_server.py:66` - `APIServer(TikTok)`, FastAPI on `SERVER_HOST:SERVER_PORT` (`0.0.0.0:5555` in `src/custom/static.py:10`, GUI backend rebinds to `127.0.0.1`). Docs at `/docs` `/redoc`.
-- `gui/` - new GUI backend. `gui/backend.py` = headless `GuiAPIServer(APIServer)` on dynamic port; `gui/api_ext.py` = `/api/gui/*` (health/bootstrap/cookie/browsers/task/settings + TaskManager). `gui/flutter_app/lib/*` = Flutter app. Empty placeholders: `src/tui_edition/`, `src/cli_edition/`, `src/gui_edition/` - ignore.
+- `gui/` - new GUI backend. `gui/backend.py` = headless `GuiAPIServer(APIServer)` on dynamic port; `gui/api_ext.py` = `/api/gui/*` (health/bootstrap/cookie/browsers/task/settings/thumbnail + TaskManager). `gui/platforms_yt.py` = B站/YouTube engine on yt-dlp (detect_platform/extract_preview/run_ytdlp_download/save_platform_cookie/find_ffmpeg). `gui/flutter_app/lib/*` = Flutter app. Empty placeholders: `src/tui_edition/`, `src/cli_edition/`, `src/gui_edition/` - ignore.
 - `src/config/settings.py:164` - reads/writes `Volume/settings.json` (UTF-8-SIG on Windows), auto-creates with defaults, `__check` fills missing keys. `src/config/parameter.py:114` - runtime validator/normalizer.
 - `src/interface/template.py:103` - base `API.run()` pagination loop; subclasses `Account/Mix/Detail/Live/Comment/Search/Hot` map 1:1 to endpoints. Callable via `Params` (`src/testers/params.py`) + `Volume/test_cookie.ini`.
-- `src/custom/internal.py:3` - `PROJECT_ROOT = <repo>/Volume` (auto mkdir), version `5.8.beta`, `DISCLAIMER_TEXT`.
+- `src/custom/internal.py:3` - `PROJECT_ROOT = <repo>/Volume` (auto mkdir), version `5.8.1` (`VERSION_BETA` kept defined=False, imported elsewhere), `DISCLAIMER_TEXT`.
 - `src/downloader/download.py:150` / `src/extract/` / `src/encrypt/` / `src/storage/` - fetch -> extract -> download -> persist.
-- `Volume/` - runtime, gitignored. `settings.json`, `DouK-Downloader.db` (tables `config_data`/`download_data`/`option_data`, key `Disclaimer`), `DouK-Downloader.log`, `cache/`. Don't commit.
-- `Dockerfile` - multi-stage `python:3.12-bullseye` builder -> `slim`, volume `/app/Volume`, port `5555`.
-- `.github/workflows/` - 6 workflows; build exe via `Manually_build_executable_programs.yml` (`pyinstaller --collect-all emoji main.py`).
+- `Volume/` - runtime, gitignored. `settings.json`, `DouK-Downloader.db` (tables `config_data`/`download_data`/`option_data`, key `Disclaimer`), `DouK-Downloader.log`, `cache/`. Don't commit. B站/YouTube cookies live in `Volume/cache/ytdlp_cookies_{bili,youtube}.txt` (Netscape format, written by `save_platform_cookie`, fed to yt-dlp via `cookiefile`).
+- `build_release.py` - one-shot packager: precheck (no running app/backend.exe, `vendor/ffmpeg/` present) -> PyInstaller `backend.spec` -> `flutter build windows --release` -> assemble `release/夜星视频下载器_v5.8/` (preserves user data in `backend/_internal/Volume`; syncs loose fallback sources `gui/*.py`, `src/`, `static/`, `locale/`) -> `--zip` emits clean dist zip (excludes user `Volume/`) + **extract-and-boot smoke test**.
+- `release/夜星视频下载器_v5.8/` - shipped layout: Flutter exe + `data/` (flutter assets) at root, `backend/` = PyInstaller onedir (Flutter prefers `backend\backend.exe`; loose `gui/`,`src/` are only a system-Python fallback), ffmpeg.exe at root AND inside `_internal`. `backend.spec`/`backend_of.spec` are gitignored local files.
 
 ## Conventions & Gotchas
 
@@ -53,15 +58,25 @@ flutter run -d windows                             # spawns Python backend autom
 - `POST /settings` (upstream) only mutates in-memory `Parameter`, not file. GUI uses `POST /api/gui/settings` which does `Parameter.set_settings_data` + `Settings.update` for persistence.
 - Windows cookie read via `rookiepy` needs admin + browser closed for Chromium; `src/tools/browser.py:152` adds Safari on darwin, drops OperaGX on linux.
 - Event loop: `test_webui.py:7` and `gui/backend.py` set `WindowsSelectorEventLoopPolicy` on `win32` - keep for any headless server start, otherwise `ProactorEventLoop` breaks `aiosqlite`.
-- `gui/backend.py` must `os.chdir(PROJECT_ROOT.parent)` and fix `src/web_ui/static` mount guard (`Path("src/web_ui/static").exists()`), else `RuntimeError: Directory does not exist`.
-- GUI backend picks random free port via `ServerSocket.bind(0)`, Flutter discovers via `BackendProcess._findBackendScript` walking up from exe to repo root for `gui/backend.py` and via `DOUK_BACKEND` env. Parent-death watcher reads `stdin` pipe -> `os._exit(0)`.
+- `gui/backend.py` (frozen) sets `PROJECT_ROOT = DOUK_HOME` (Flutter passes app root) else exe dir, inserts it in `sys.path`, `os.chdir`s there. Frozen data dir is `backend\_internal\Volume` (`internal.py` derives `PROJECT_ROOT` from `__file__` -> `_internal`) - user settings/Cookies/db live there, NOT at app root; `build_release.py` preserves it when swapping builds.
+- GUI backend picks random free port via `ServerSocket.bind(0)`; Flutter prefers `backend\backend.exe` (onedir, passes `DOUK_HOME`) and falls back to `python gui/backend.py`. Parent-death watcher (`backend.py`) `os.read`es the stdin pipe and `os._exit(0)` on EOF - it must stay pipe-armed via the `isatty` guard (fixed 2026-08-29; older version left orphan backend.exe).
+- **Never enable `MigrateFolder` in the GUI backend**: `check_settings` calls it unless `TikTokDownloader.skip_folder_migration` (set True in `gui/backend.py`). Root `data/` is Flutter assets; the upstream migration would move it into `Volume/Data` and crash on fresh machines (release ships no `Volume/`).
+- YouTube/B站: `yt-dlp-ejs` (JS challenge solver scripts) is a hard dep and needs a JS runtime (node/deno/bun) on the machine; `_base_opts` sets `js_runtimes` `{deno,node,bun,quickjs}` because yt-dlp defaults to deno only. On bot-check (`_is_bot_check`), both preview and download rotate `_FALLBACK_CLIENTS` unconditionally - never gate on cookie-file presence again (that was the "import cookie forever fails" bug). `_friendly_error` wording branches on whether the cookie file exists.
+- `GET /api/gui/thumbnail` proxies images through urllib (NOT httpx - urllib picks up the Windows registry system proxy, which is how i.ytimg.com is reachable); blocks non-global IPs; frontend uses it only for `platform == 'youtube'`.
+- ffmpeg lookup order: `DOUK_HOME` -> exe dir -> exe parent -> `_MEIPASS` (bundled via spec `binaries` from `vendor/ffmpeg/`) -> PATH.
+- Zip packaging trap: never blanket-exclude `*.zip` when assembling the dist zip - `_internal/base_library.zip` is the Python stdlib; excluding it makes every fresh extraction die with `init_fs_encoding / No module named 'encodings'` while the dev machine's release dir works fine. `build_release.py --zip` ends with an extract-and-boot smoke test that catches this class; trust it over manual dev-dir testing.
+- Test habit: simulate a fresh machine (copy release content WITHOUT `Volume/`, boot `backend\backend.exe`, poll `/api/gui/health`) - dev `Volume/` silently skips migration/compat code paths; backend cold start can exceed 12s.
 - Task bug history: handler named `create_task` shadowed `asyncio.create_task` inside `setup_gui_routes` - must use alias `aio_create_task`.
 - Flutter theme: `gui/flutter_app/lib/services/theme_controller.dart` persists `ThemeMode` (`system` default) via `shared_preferences_windows`; `lib/main.dart` wraps `MaterialApp` in `ListenableBuilder`.
 - Lint before commit: `ruff` is sole formatter. No `mypy`/`pytest` config beyond `pyproject.toml`.
 - Branch workflow: PRs target `develop`, not `master` (see README contribution guide); commit `<type>: <desc>`.
+
+- `Dockerfile` - upstream CLI image (multi-stage, port `5555`), unrelated to the GUI release.
+- `.github/workflows/` - 6 upstream workflows; `Manually_build_executable_programs.yml` builds the old CLI `main.py` exe, NOT the GUI release - use `build_release.py` instead.
 
 ## References
 
 - Runtime docs: `README.md` (CN), `README_EN.md`, `docs/Cookie获取教程.md`
 - API example: `README.md:104`
 - Wiki: `https://github.com/JoeanAmier/TikTokDownloader/wiki/Documentation`
+- Release layout & packaging rules: this file's Structure/Gotchas + `build_release.py` docstring

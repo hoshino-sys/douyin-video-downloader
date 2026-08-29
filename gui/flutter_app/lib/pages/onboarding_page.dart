@@ -57,8 +57,11 @@ class _OnboardingPageState extends State<OnboardingPage> {
 
   @override
   Widget build(BuildContext context) {
+    // 首次启动为 pushReplacement（无可弹回路由，用步骤切换）；
+    // 「重新配置 Cookie」为 push 进入（可弹回，返回键/系统返回都直接退出向导）
+    final canPop = Navigator.of(context).canPop();
     return PopScope(
-      canPop: false,
+      canPop: canPop,
       child: Scaffold(
         body: Center(
           child: ConstrainedBox(
@@ -69,8 +72,14 @@ class _OnboardingPageState extends State<OnboardingPage> {
                 0 => _buildDisclaimer(context),
                 _ => CookieSetupStep(
                     onDone: _finish,
-                    onBack: () => setState(
-                        () => _step = widget.info.disclaimerAccepted ? 1 : 0),
+                    onBack: () {
+                      if (canPop) {
+                        Navigator.of(context).pop();
+                      } else {
+                        setState(() => _step =
+                            widget.info.disclaimerAccepted ? 1 : 0);
+                      }
+                    },
                   ),
               },
             ),

@@ -29,13 +29,15 @@ from gui.api_ext import setup_gui_routes
 
 
 def watch_parent_process():
+    """Flutter 以管道持有本进程 stdin 且从不写入；读到 EOF 即父进程已退出。
+    isatty 守卫保证双击/控制台直启（非管道）不会武装本监视器。
+    用 os.read 读原始描述符，避免解释器关闭时 io 缓冲区锁导致的
+    Fatal Python error: _enter_buffered_busy。"""
+
     def reader():
         try:
-            # If stdin is already at EOF (e.g., launched without a pipe), don't exit immediately
-            first = sys.stdin.buffer.read(1)
-            if not first:
-                return
-            while sys.stdin.buffer.read(4096):
+            fd = sys.stdin.fileno()
+            while os.read(fd, 4096):
                 pass
         except Exception:
             pass
@@ -57,6 +59,9 @@ class GuiAPIServer(APIServer):
 async def start(port: int, host: str = "127.0.0.1"):
     async with TikTokDownloader() as application:
         application.check_config()
+        # 程序根目录的 data 是 Flutter 资源目录，不是旧版数据目录，
+        # 旧版目录迁移会误搬它并因文件被 GUI 占用而崩溃，必须跳过
+        application.skip_folder_migration = True
         await application.check_settings(False)
         server = GuiAPIServer(
             application.parameter,

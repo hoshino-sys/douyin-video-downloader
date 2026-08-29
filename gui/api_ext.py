@@ -1,11 +1,13 @@
 from asyncio import create_task as aio_create_task
 from datetime import datetime
+from functools import lru_cache
 import threading
 import time
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from fastapi import Depends, HTTPException
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from src.application.main_server import token_dependency
@@ -21,6 +23,52 @@ if TYPE_CHECKING:
 __all__ = ["setup_gui_routes"]
 
 GUI_TAG = "GUI"
+
+# 图床 → Referer 映射（部分图床带 Referer 才返回图片）
+_IMAGE_REFERERS = (
+    ("hdslb.com", "https://www.bilibili.com/"),
+    ("douyinpic.com", "https://www.douyin.com/"),
+    ("ytimg.com", "https://www.youtube.com/"),
+)
+
+
+@lru_cache(maxsize=64)
+def _fetch_image(url: str) -> tuple[bytes, str]:
+    """同步抓取图片。urllib 默认走系统代理（Windows 读注册表），
+    可覆盖前端直连不了的图床（如 YouTube i.ytimg.com）。"""
+    import ipaddress
+    import socket
+    import urllib.request
+    from urllib.parse import urlparse
+
+    host = (urlparse(url).hostname or "").lower()
+    if not host or host == "localhost" or host.endswith(".local"):
+        raise ValueError("不允许的地址")
+    try:  # 字面 IP 与域名解析结果都必须是公网地址，防内网访问
+        for info in socket.getaddrinfo(host, None):
+            if not ipaddress.ip_address(info[4][0]).is_global:
+                raise ValueError("不允许内网地址")
+    except socket.gaierror as e:
+        raise ValueError("地址无法解析") from e
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+        )
+    }
+    for domain, referer in _IMAGE_REFERERS:
+        if host == domain or host.endswith("." + domain):
+            headers["Referer"] = referer
+            break
+    request = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(request, timeout=8) as resp:
+        ctype = (resp.headers.get("Content-Type") or "").split(";")[0]
+        ctype = ctype.strip().lower()
+        data = resp.read(3 * 1024 * 1024 + 1)
+    if not ctype.startswith("image/") or not data or len(data) > 3 * 1024 * 1024:
+        raise ValueError("响应不是图片")
+    return data, ctype
 
 
 def _list_explorer_windows() -> set[int]:
@@ -369,6 +417,25 @@ def setup_gui_routes(server: "APIServer", app: "TikTokDownloader") -> None:
             }
         preview["platform"] = platform
         return preview
+
+    @fast_app.get(
+        "/api/gui/thumbnail",
+        tags=[GUI_TAG],
+        include_in_schema=False,
+    )
+    async def thumbnail(url: str = "", token: str = Depends(token_dependency)):
+        """图片代理：加载前端直连不了的图床（如 YouTube i.ytimg.com）。"""
+        if not url.startswith(("http://", "https://")):
+            raise HTTPException(status_code=400, detail="无效的图片地址")
+        try:
+            data, ctype = await asyncio.to_thread(_fetch_image, url)
+        except Exception:
+            raise HTTPException(status_code=404, detail="封面获取失败") from None
+        return Response(
+            content=data,
+            media_type=ctype,
+            headers={"Cache-Control": "max-age=86400"},
+        )
 
     @fast_app.post("/api/gui/task", tags=[GUI_TAG])
     async def create_gui_task(req: GuiTaskRequest, token: str = Depends(token_dependency)):

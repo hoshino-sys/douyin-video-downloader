@@ -51,6 +51,10 @@ class ApiClient {
     return decoded;
   }
 
+  /// 经后端代理加载图片（前端直连不了的图床，如 YouTube 封面 i.ytimg.com）
+  String thumbnailUrl(String rawUrl) =>
+      '$baseUrl/api/gui/thumbnail?url=${Uri.encodeComponent(rawUrl)}';
+
   // ---- GUI ----
 
   Future<BootstrapInfo> bootstrap() async =>
