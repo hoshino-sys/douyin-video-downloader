@@ -22,10 +22,14 @@ class DoukApp extends StatelessWidget {
         theme: ThemeData(
           colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFFFE2C55), brightness: Brightness.light),
           useMaterial3: true,
+          fontFamily: 'Noto Sans SC',
+          fontFamilyFallback: const ['Microsoft YaHei UI'],
         ),
         darkTheme: ThemeData(
           colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFFFE2C55), brightness: Brightness.dark),
           useMaterial3: true,
+          fontFamily: 'Noto Sans SC',
+          fontFamilyFallback: const ['Microsoft YaHei UI'],
         ),
         themeMode: themeController.mode,
         home: const SplashPage(),

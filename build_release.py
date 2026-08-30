@@ -4,16 +4,19 @@
     D:/Python 3.12/python.exe build_release.py [--zip]
 
 流程: 前置检查 → PyInstaller 后端 → Flutter 前端 → 组装 release 目录
-（保留 backend/_internal/Volume 用户数据）→ 同步回退源码 → 可选生成干净分发包。
+（保留 backend/_internal/{UserData,Volume} 用户数据）→ 同步回退源码
+→ 可选生成干净分发包 → 清理旧版本产物。
 
-分发包自动排除: 根 Volume/（本机下载与设置）、backend/_internal/Volume/
-（本机 Cookie）、__pycache__、旧 zip，避免把个人数据发给别人。
+分发包自动排除: 根 Volume/（旧版数据目录）、UserData/、Downloads/（本机
+下载与设置）、backend/_internal/{UserData,Volume}/、__pycache__、旧 zip，
+避免把个人数据发给别人。
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -21,7 +24,7 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-RELEASE_DIR_NAME = "夜星视频下载器_v5.9.1"
+RELEASE_DIR_NAME = "夜星视频下载器_v5.9.2"
 REL = ROOT / "release" / RELEASE_DIR_NAME
 DIST_BACKEND = ROOT / "dist" / "夜星视频下载器后端"
 FLUTTER_RELEASE = ROOT / "gui" / "flutter_app" / "build" / "windows" / "x64" / "runner" / "Release"
@@ -73,12 +76,20 @@ def check_no_running() -> None:
         fail("以下进程正在使用构建目录，请先退出应用再打包：\n  " + "\n  ".join(locked))
 
 
+def _release_version_key(p: Path) -> tuple[int, ...]:
+    m = re.search(r"v(\d+(?:\.\d+)*)", p.name)
+    return tuple(int(x) for x in m.group(1).split(".")) if m else (0,)
+
+
 def bootstrap_release_dir() -> None:
-    """发布目录尚不存在时，从旧版本目录整体迁移（保留 Volume 用户数据）。"""
+    """发布目录尚不存在时，从旧版本目录整体迁移（保留用户数据）。
+
+    版本号按数字比较取最新：字符串排序在 v5.10 会排在 v5.9 之前。"""
     if REL.exists():
         return
     candidates = sorted(
-        p for p in REL.parent.glob("夜星视频下载器_v5.*") if p.is_dir()
+        (p for p in REL.parent.glob("夜星视频下载器_v5.*") if p.is_dir()),
+        key=_release_version_key,
     )
     if not candidates:
         fail(f"未找到发布目录 {REL}，也没有可迁移的旧版发布目录")
@@ -149,19 +160,23 @@ def assemble_backend() -> None:
     log("== [3/4] 组装发布包…")
     backend_dir = REL / "backend"
     backend_dir.mkdir(parents=True, exist_ok=True)
-    volume = backend_dir / "_internal" / "Volume"
-    volume_bak = backend_dir / "Volume_bak"
-    if volume.exists():  # 保留用户数据（设置/Cookie/数据库）
-        shutil.move(volume, volume_bak)
+    # 保留用户数据（设置/Cookie/数据库）；UserData 为现名，Volume 为旧版遗留
+    saved = []
+    for name in ("UserData", "Volume"):
+        volume = backend_dir / "_internal" / name
+        if volume.exists():
+            bak = backend_dir / f"{name}_bak"
+            shutil.move(str(volume), str(bak))
+            saved.append((volume, bak))
     try:
         shutil.rmtree(backend_dir / "_internal", ignore_errors=True)
         shutil.copytree(DIST_BACKEND / "_internal", backend_dir / "_internal")
     finally:
-        if volume_bak.exists():
+        for volume, bak in saved:
             if volume.exists():
-                shutil.rmtree(volume_bak, ignore_errors=True)
+                shutil.rmtree(bak, ignore_errors=True)
             else:
-                shutil.move(volume_bak, volume)
+                shutil.move(str(bak), str(volume))
     shutil.copy2(DIST_BACKEND / BACKEND_EXE, backend_dir / BACKEND_EXE)
     # 清理旧版后端进程文件，避免包内残留两份后端
     for legacy in ("backend.exe", "backend"):
@@ -239,9 +254,13 @@ def make_zip() -> None:
     zip_path = REL.parent / (REL.name + ".zip")
     if zip_path.exists():
         zip_path.unlink()
-    # 排除本机个人数据与构建残留
+    # 排除本机个人数据与构建残留：UserData/Downloads 为现数据目录，
+    # Volume 为旧版数据目录（bootstrap 迁移前仍在），三者都必须排除
     exclude_prefixes = (
+        REL / "UserData",
+        REL / "Downloads",
         REL / "Volume",
+        REL / "backend" / "_internal" / "UserData",
         REL / "backend" / "_internal" / "Volume",
     )
     exclude_names = {"__pycache__", ".DS_Store", "Thumbs.db"}
@@ -324,6 +343,27 @@ def verify_zip(zip_path: Path) -> None:
                 pass
 
 
+def cleanup_old_releases() -> None:
+    """发布成功后清理旧版本产物（保留当前版本目录与 zip）。"""
+    keep_zip = REL.parent / (REL.name + ".zip")
+    removed = []
+    for p in REL.parent.iterdir():
+        if p == REL or p == keep_zip:
+            continue
+        if not p.name.startswith("夜星视频下载器_v5."):
+            continue
+        try:
+            if p.is_dir():
+                shutil.rmtree(p, ignore_errors=True)
+            else:
+                p.unlink()
+            removed.append(p.name)
+        except OSError:
+            pass
+    if removed:
+        log("已清理旧版本产物：" + "、".join(removed))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="夜星视频下载器 打包脚本")
     parser.add_argument("--zip", action="store_true", help="生成干净分发包（排除个人数据）")
@@ -353,6 +393,7 @@ def main() -> None:
     if args.zip:
         make_zip()
         verify_zip(REL.parent / (REL.name + ".zip"))
+        cleanup_old_releases()
 
 
 if __name__ == "__main__":

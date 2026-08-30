@@ -1,10 +1,83 @@
+import os
+import shutil
+import sys
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.joinpath("Volume")
-PROJECT_ROOT.mkdir(exist_ok=True)
+# 基准目录 = 应用根：frozen 模式下打包副本的 __file__ 指向 _internal，
+# 不能用 __file__ 推导，必须以 DOUK_HOME（Flutter 传入的应用根）为准
+if getattr(sys, "frozen", False):
+    _BASE_DIR = Path(
+        os.environ.get("DOUK_HOME") or Path(sys.executable).resolve().parent
+    )
+else:
+    _BASE_DIR = Path(__file__).resolve().parent.parent.parent
+PROJECT_ROOT = _BASE_DIR.joinpath("UserData")
+DOWNLOAD_ROOT = _BASE_DIR.joinpath("Downloads")
+
+# 旧版散落的媒体文件扩展名（仅匹配 UserData 根目录一级，用于迁移旧版 yt-dlp 直存文件）
+_LEGACY_MEDIA_EXTS = frozenset(
+    {".mp4", ".webm", ".m4a", ".mp3", ".flv", ".jpg", ".jpeg", ".png", ".gif", ".webp"}
+)
+# 旧版下载媒体目录名（整体平移到 Downloads，保持原分组）
+_LEGACY_MEDIA_DIRS = ("Download", "Music", "Live", "Data", "UID*", "MID*", "CID*")
+
+
+def _migrate_legacy_layout() -> None:
+    """v5.9.1 及更早版本把配置与下载混在 Volume/ 一个目录里；v5.9.2 起拆分为
+    UserData/（配置、数据库、日志、缓存）与 Downloads/（下载媒体）。
+    首启动自动迁移：Volume 整体改名为 UserData，再将其中的媒体目录与散落
+    媒体文件搬入 Downloads。搬运统一用 shutil.move（Downloads 可能已被提前
+    mkdir，Windows 下 os.rename 对已存在目标会报错）；散落文件同名跳过、
+    不覆盖不中断；每步独立容错，失败仅提示，不阻塞启动。"""
+    legacy = _BASE_DIR.joinpath("Volume")
+    try:
+        if legacy.is_dir() and not PROJECT_ROOT.exists():
+            shutil.move(str(legacy), str(PROJECT_ROOT))
+            print("[夜星视频下载器] 旧数据目录 Volume 已迁移为 UserData", flush=True)
+    except OSError as e:
+        print(f"[夜星视频下载器] Volume 迁移失败（可手动改名为 UserData）: {e}", flush=True)
+    try:
+        if not PROJECT_ROOT.is_dir():
+            return
+        dirs = [
+            p
+            for pattern in _LEGACY_MEDIA_DIRS
+            for p in PROJECT_ROOT.glob(pattern)
+            if p.is_dir()
+        ]
+        loose = [
+            p
+            for p in PROJECT_ROOT.iterdir()
+            if p.is_file() and p.suffix.lower() in _LEGACY_MEDIA_EXTS
+        ]
+        if not dirs and not loose:
+            return
+        DOWNLOAD_ROOT.mkdir(parents=True, exist_ok=True)
+        for src in dirs:
+            dst = DOWNLOAD_ROOT.joinpath(src.name)
+            if dst.exists():
+                continue
+            try:
+                shutil.move(str(src), str(dst))
+            except OSError as e:
+                print(f"[夜星视频下载器] 媒体目录 {src.name} 搬家失败: {e}", flush=True)
+        for src in loose:
+            dst = DOWNLOAD_ROOT.joinpath(src.name)
+            if dst.exists():  # 同名跳过，保留已有文件
+                continue
+            try:
+                shutil.move(str(src), str(dst))
+            except OSError as e:
+                print(f"[夜星视频下载器] 媒体文件 {src.name} 搬家失败: {e}", flush=True)
+    except OSError as e:
+        print(f"[夜星视频下载器] 下载媒体迁移到 Downloads 失败: {e}", flush=True)
+
+
+_migrate_legacy_layout()
+PROJECT_ROOT.mkdir(parents=True, exist_ok=True)
 VERSION_MAJOR = 5
 VERSION_MINOR = 9
-VERSION_PATCH = 1
+VERSION_PATCH = 2
 VERSION_BETA = False
 __VERSION__ = f"{VERSION_MAJOR}.{VERSION_MINOR}.{VERSION_PATCH}"
 PROJECT_NAME = f"夜星视频下载器 V{VERSION_MAJOR}.{VERSION_MINOR}.{VERSION_PATCH}"

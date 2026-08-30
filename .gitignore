@@ -6,6 +6,8 @@ __pycache__/
 /.idea/
 /.run/
 /Volume/
+/UserData/
+/Downloads/
 .dart_tool/
 /build/
 gui/flutter_app/build/

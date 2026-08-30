@@ -54,7 +54,6 @@ D:/Python 3.12/python.exe build_release.py --zip
 
 ```bash
 python main.py          # 终端交互模式
-python test_webui.py    # WebAPI 模式（文档见 /docs）
 cd gui/flutter_app && flutter run -d windows   # GUI（自动拉起 Python 后端）
 ```
 

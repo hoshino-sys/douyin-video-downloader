@@ -69,6 +69,7 @@ class Settings:
         "date_format": "%Y-%m-%d %H:%M:%S",
         "split": "-",
         "folder_mode": False,
+        "platform_folders": True,
         "music": False,
         "truncate": 50,
         "storage_format": "",

@@ -77,6 +77,7 @@ class Settings(BaseModel):
     date_format: str | None = None
     split: str | None = None
     folder_mode: bool | None = None
+    platform_folders: bool | None = None
     music: bool | None = None
     truncate: int | None = None
     storage_format: str | None = None

@@ -190,7 +190,6 @@ class _SettingsPageState extends State<SettingsPage> {
 
   static const _textKeys = [
     'root',
-    'folder_name',
     'name_format',
     'date_format',
     'split',
@@ -312,14 +311,16 @@ class _SettingsPageState extends State<SettingsPage> {
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: Column(children: [
-                  _textField('root', '下载根目录', '例如 D:\\Downloads，留空使用项目默认'),
-                  _textField('folder_name', '批量下载文件夹名', '默认 Download，账号批量时作为子目录模板'),
+                  _textField('root', '下载根目录', '例如 D:\\Downloads，留空使用软件目录下的 Downloads 文件夹'),
                   _textField('name_format', '文件命名格式', '可用变量：create_time type nickname desc id 等，空格分隔'),
                   Row(children: [
                     Expanded(child: _textField('date_format', '日期格式', '%Y-%m-%d %H:%M:%S')),
                     const SizedBox(width: 12),
                     Expanded(child: _textField('split', '分隔符', '默认 -')),
                   ]),
+                  _boolTile('platform_folders',
+                      '按平台分类保存（抖音/TikTok/B站/YouTube 子文件夹）',
+                      fallback: true),
                   _boolTile('folder_mode', '为每个作品创建单独文件夹'),
                   const Divider(),
                   Row(children: [
@@ -447,11 +448,11 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  Widget _boolTile(String key, String title) {
+  Widget _boolTile(String key, String title, {bool fallback = false}) {
     return SwitchListTile(
       contentPadding: EdgeInsets.zero,
       title: Text(title),
-      value: _boolValue(key),
+      value: _boolValue(key, fallback: fallback),
       onChanged: (v) => setState(() => _data[key] = v),
     );
   }
@@ -474,5 +475,6 @@ class _SettingsPageState extends State<SettingsPage> {
     return v == null ? '' : v.toString();
   }
 
-  bool _boolValue(String key) => _data[key] as bool? ?? false;
+  bool _boolValue(String key, {bool fallback = false}) =>
+      _data[key] as bool? ?? fallback;
 }

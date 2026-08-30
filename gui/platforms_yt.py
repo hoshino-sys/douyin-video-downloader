@@ -25,7 +25,9 @@ __all__ = [
     "save_platform_cookie",
 ]
 
-_CACHE_DIR = PROJECT_ROOT.joinpath("cache")
+# 与 parameter.py 的下载临时缓存同一目录：Windows 不区分大小写，
+# Cache/cache 两个名字会混用同一个文件夹，这里必须用同一个拼写
+_CACHE_DIR = PROJECT_ROOT.joinpath("Cache")
 
 _BILI_VIDEO = (
     r"^https?://(?:www\.|m\.)?bilibili\.com/video/(?:BV[\w]+|av\d+)",
@@ -121,7 +123,7 @@ def platform_cookie_states(parameter: Any) -> dict:
     """返回四个平台的 Cookie 导入/登录态，供 GUI 状态展示。
 
     douyin/tiktok 分别取 parameter 中各自的 Cookie 与登录态；bili/youtube 看
-    Volume/cache 下的 Netscape Cookie 文件是否存在及其中的登录态键。
+    UserData/Cache 下的 Netscape Cookie 文件是否存在及其中的登录态键。
     """
     states = {
         "douyin": {

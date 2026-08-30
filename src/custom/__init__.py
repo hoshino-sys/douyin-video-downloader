@@ -8,6 +8,7 @@ from .function import (
 from .internal import (
     DISCLAIMER_TEXT,
     PROJECT_ROOT,
+    DOWNLOAD_ROOT,
     VERSION_MAJOR,
     VERSION_MINOR,
     VERSION_BETA,

@@ -15,6 +15,7 @@ from ..custom import (
     PARAMS_HEADERS,
     PARAMS_HEADERS_TIKTOK,
     PROJECT_ROOT,
+    DOWNLOAD_ROOT,
     QRCODE_HEADERS,
     TIMEOUT,
     USERAGENT,
@@ -106,11 +107,13 @@ class Parameter:
         timeout=10,
         douyin_platform=True,
         tiktok_platform=True,
+        platform_folders=True,
         **kwargs,
     ):
         self.settings = settings
         self.cookie_object = cookie_object
-        self.ROOT = PROJECT_ROOT  # 项目根路径
+        self.ROOT = PROJECT_ROOT  # 程序数据目录（UserData：配置/数据库/缓存）
+        self.DOWNLOAD_ROOT = DOWNLOAD_ROOT  # 默认下载目录（Downloads）
         self.cache = PROJECT_ROOT.joinpath("Cache")  # 缓存路径
         self.logger = logger(PROJECT_ROOT, console)
         self.logger.run()
@@ -161,6 +164,7 @@ class Parameter:
         self.date_format = self.__check_date_format(date_format)
         self.split = self.__check_split(split)
         self.folder_mode = self.check_bool_false(folder_mode)
+        self.platform_folders = self.check_bool_true(platform_folders)
         self.music = self.check_bool_false(music)
         self.truncate = self.__check_truncate(truncate)
         self.storage_format = self.__check_storage_format(storage_format)
@@ -228,6 +232,7 @@ class Parameter:
             "date_format": self.__check_date_format,
             "split": self.__check_split,
             "folder_mode": self.check_bool_false,
+            "platform_folders": self.check_bool_true,
             "music": self.check_bool_false,
             "truncate": self.__check_truncate,
             "storage_format": self.__check_storage_format,
@@ -357,7 +362,7 @@ class Parameter:
 
     def __check_root(self, root: str) -> Path:
         if not root:
-            return self.ROOT
+            return self.DOWNLOAD_ROOT
         if (r := Path(root)).is_dir():
             self.logger.info(f"root 参数已设置为 {root}", False)
             return r
@@ -366,10 +371,10 @@ class Parameter:
             return r
         self.logger.warning(
             _(
-                "root 参数 {root} 不是有效的文件夹路径，程序将使用项目根路径作为储存路径"
+                "root 参数 {root} 不是有效的文件夹路径，程序将使用软件目录下的 Downloads 作为储存路径"
             ).format(root=root),
         )
-        return self.ROOT
+        return self.DOWNLOAD_ROOT
 
     @staticmethod
     def __check_root_again(root: Path) -> bool | Path:
@@ -827,6 +832,7 @@ class Parameter:
             "date_format": self.date_format,
             "split": self.split,
             "folder_mode": self.folder_mode,
+            "platform_folders": self.platform_folders,
             "music": self.music,
             "truncate": self.truncate,
             "storage_format": self.storage_format,
@@ -1006,6 +1012,7 @@ class Parameter:
     def __generate_folders(self):
         self.compatible()
         self.cache.mkdir(exist_ok=True)
+        self.DOWNLOAD_ROOT.mkdir(parents=True, exist_ok=True)
 
     def __set_browser_info(
         self,

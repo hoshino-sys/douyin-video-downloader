@@ -59,6 +59,7 @@ class Downloader:
         server_mode: bool = False,
     ):
         self.cleaner = params.CLEANER
+        self.params = params  # 保留引用：platform_folders 等设置需动态读取
         self.client: "AsyncClient" = params.client
         self.client_tiktok: "AsyncClient" = params.client_tiktok
         self.headers = params.headers_download
@@ -163,7 +164,7 @@ class Downloader:
             case "detail":
                 await self.run_general(data, tiktok, **kwargs)
             case "music":
-                await self.run_music(data, **kwargs)
+                await self.run_music(data, tiktok=tiktok, **kwargs)
             case "live":
                 await self.run_live(data, tiktok, **kwargs)
             case _:
@@ -194,6 +195,7 @@ class Downloader:
                 collect_id,
                 collect_name,
             ),
+            tiktok=tiktok,
         )
         await self.batch_processing(
             data,
@@ -202,7 +204,7 @@ class Downloader:
         )
 
     async def run_general(self, data: list[dict], tiktok: bool, **kwargs):
-        root = self.storage_folder(mode="detail")
+        root = self.storage_folder(mode="detail", tiktok=tiktok)
         await self.batch_processing(
             data,
             root,
@@ -212,9 +214,10 @@ class Downloader:
     async def run_music(
         self,
         data: list[dict],
+        tiktok=False,
         **kwargs,
     ):
-        root = self.root.joinpath("Music")
+        root = self.platform_root(tiktok).joinpath("Music")
         tasks = []
         for i in data:
             name = self.generate_music_name(i)
@@ -250,6 +253,7 @@ class Downloader:
         self.generate_live_commands(
             data,
             download_command,
+            tiktok=tiktok,
         )
         self.console.info(
             _("程序将会调用 ffmpeg 下载直播，关闭 夜星视频下载器 不会中断下载！"),
@@ -261,9 +265,10 @@ class Downloader:
         data: list[tuple],
         commands: list,
         suffix: str = "mp4",
+        tiktok=False,
     ):
-        root = self.root.joinpath("Live")
-        root.mkdir(exist_ok=True)
+        root = self.platform_root(tiktok).joinpath("Live")
+        root.mkdir(parents=True, exist_ok=True)
         for i, f, m in data:
             name = self.cleaner.filter_name(
                 f"{i['title']}{self.split}{i['nickname']}{self.split}{datetime.now():%Y-%m-%d %H.%M.%S}.{suffix}",
@@ -774,11 +779,19 @@ class Downloader:
             case _:
                 raise DownloaderError
 
+    def platform_root(self, tiktok: bool) -> Path:
+        """下载根目录：按平台分类开启时套一层平台子目录（抖音/TikTok），
+        关闭时即 root 本身。动态读取设置，修改后无需重启。"""
+        if not getattr(self.params, "platform_folders", True):
+            return self.root
+        return self.root.joinpath(_("TikTok") if tiktok else _("抖音"))
+
     def storage_folder(
         self,
         mode: str = "",
         id_: str = "",
         name: str = "",
+        tiktok: bool = False,
     ) -> Path:
         match mode:
             case "post":
@@ -792,11 +805,15 @@ class Downloader:
             case "collects":
                 folder_name = _("CID{id_}_{name}_收藏夹作品").format(id_=id_, name=name)
             case "detail":
-                folder_name = self.folder_name
+                # 默认下载根已是 Downloads，单作品直接落在（平台层）根下，
+                # 不再套 folder_name 层避免 Downloads/Download 双层目录
+                folder_name = ""
             case _:
                 raise DownloaderError
-        folder = self.root.joinpath(folder_name)
-        folder.mkdir(exist_ok=True)
+        folder = self.platform_root(tiktok)
+        if folder_name:
+            folder = folder.joinpath(folder_name)
+        folder.mkdir(parents=True, exist_ok=True)
         return folder
 
     def generate_detail_name(self, data: dict) -> str:

@@ -356,6 +356,24 @@ def setup_gui_routes(server: "APIServer", app: "TikTokDownloader") -> None:
 
         return ctx()
 
+    _PLATFORM_DIR_NAMES = {
+        "douyin": "抖音",
+        "tiktok": "TikTok",
+        "bili": "B站",
+        "youtube": "YouTube",
+    }
+
+    def _with_platform_dir(base, platform: str):
+        """平台分类开启时在下载根（或自定义目录）下套一层平台子目录，
+        与 Downloader.platform_root 的落盘规则保持一致。"""
+        from pathlib import Path
+
+        base = Path(base)
+        if not server.parameter.platform_folders:
+            return base
+        name = _PLATFORM_DIR_NAMES.get(platform, platform)
+        return base / name
+
     logger = server.parameter.logger
     _orig_info = logger.info
     _orig_warning = logger.warning
@@ -559,7 +577,10 @@ def setup_gui_routes(server: "APIServer", app: "TikTokDownloader") -> None:
                 platform="tiktok" if is_tiktok else "douyin",
             )
             task["download_dir"] = str(
-                custom_dir or server.parameter.root.resolve()
+                _with_platform_dir(
+                    custom_dir or server.parameter.root.resolve(),
+                    "tiktok" if is_tiktok else "douyin",
+                )
             )
             tasks.append_log(task, f"开始下载单个作品，平台={'TikTok' if is_tiktok else '抖音'}")
             desc = req.data.get("desc", "") or req.data.get("id", "")
@@ -602,7 +623,10 @@ def setup_gui_routes(server: "APIServer", app: "TikTokDownloader") -> None:
                 platform="tiktok" if is_tiktok else "douyin",
             )
             task["download_dir"] = str(
-                custom_dir or server.parameter.root.resolve()
+                _with_platform_dir(
+                    custom_dir or server.parameter.root.resolve(),
+                    "tiktok" if is_tiktok else "douyin",
+                )
             )
             tasks.append_log(task, f"开始批量下载，账号={req.sec_user_id} 平台={'TikTok' if is_tiktok else '抖音'} tab={req.tab}")
             if req.earliest or req.latest:
@@ -659,7 +683,11 @@ def setup_gui_routes(server: "APIServer", app: "TikTokDownloader") -> None:
                 req.label or "B站/YouTube 下载",
                 platform=ytdlp_platform,
             )
-            root = custom_dir or server.parameter.root.resolve()
+            root = _with_platform_dir(
+                custom_dir or server.parameter.root.resolve(),
+                ytdlp_platform,
+            )
+            root.mkdir(parents=True, exist_ok=True)
             task["download_dir"] = str(root)
             tasks.append_log(task, f"链接：{req.url.strip()[:120]}")
 
@@ -745,7 +773,8 @@ def setup_gui_routes(server: "APIServer", app: "TikTokDownloader") -> None:
         filename = url.rsplit("/", 1)[-1] or "update.zip"
         target_dir = Path.home() / "Downloads"
         if not target_dir.exists():
-            target_dir = PROJECT_ROOT.joinpath("downloads")
+            # 命名避开顶层的 Downloads（下载媒体目录），防止大小写混淆
+            target_dir = PROJECT_ROOT.joinpath("updates")
         target_dir.mkdir(parents=True, exist_ok=True)
         dest = target_dir / filename
 

@@ -19,7 +19,7 @@ class RenameCompatible:
         if new.exists():
             return
         for name in cls.LEGACY_DB_FILES:
-            # 打包版历史版本可能把库放在应用根目录而非 Volume 内
+            # 打包版历史版本可能把库放在应用根目录而非 UserData 内
             for old in (PROJECT_ROOT.joinpath(name), PROJECT_ROOT.parent.joinpath(name)):
                 if old.exists():
                     copy2(old.resolve(), new.resolve())
