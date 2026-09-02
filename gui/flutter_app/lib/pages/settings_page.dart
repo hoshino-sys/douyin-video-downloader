@@ -104,6 +104,21 @@ class _SettingsPageState extends State<SettingsPage> {
             Text('当前版本：v${info.current}'),
             const SizedBox(height: 4),
             Text('最新版本：v${info.latest}'),
+            if (info.isPatch) ...[
+              const SizedBox(height: 4),
+              Text(
+                '更新方式：增量补丁包${info.sizeLabel.isEmpty ? '' : '（约 ${info.sizeLabel}）'}，'
+                '仅下载有变化的文件',
+                style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(ctx).colorScheme.primary,
+                      fontWeight: FontWeight.w600,
+                    ),
+              ),
+            ] else if (info.sizeLabel.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text('更新包大小：约 ${info.sizeLabel}',
+                  style: Theme.of(ctx).textTheme.bodySmall),
+            ],
             if (info.zipUrl.isEmpty) ...[
               const SizedBox(height: 12),
               Text('未在发布页找到可下载的更新包，请到发布页手动下载：\n${info.pageUrl}',
@@ -123,8 +138,12 @@ class _SettingsPageState extends State<SettingsPage> {
               ],
               const SizedBox(height: 12),
               Text(
-                '点击「在应用内下载」开始下载更新包（可在任务页查看进度）；'
-                '下载完成后退出本程序，解压压缩包覆盖原目录即可完成更新。',
+                info.isPatch
+                    ? '点击「在应用内下载」开始下载增量补丁（可在任务页查看进度）；'
+                        '下载完成后退出本程序，把补丁包内的全部文件解压到软件安装目录'
+                        '（选择「替换目标中的文件」），再运行补丁内的「清理已移除文件.bat」即可。'
+                    : '点击「在应用内下载」开始下载更新包（可在任务页查看进度）；'
+                        '下载完成后退出本程序，解压压缩包覆盖原目录即可完成更新。',
                 style: Theme.of(ctx).textTheme.bodySmall,
               ),
             ],

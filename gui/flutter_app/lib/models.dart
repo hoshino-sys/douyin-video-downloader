@@ -185,8 +185,12 @@ class TaskInfo {
   });
 
   bool get isRunning => status == 'running';
+  bool get isPaused => status == 'paused';
+  bool get isCancelled => status == 'cancelled';
   bool get isSuccess => status == 'success';
   bool get isFailed => status == 'failed';
+  /// 暂停中：进度条保留但不再刷新
+  bool get isActive => isRunning || isPaused;
 
   /// 卡片大标题：视频标题 → 当前状态文本 → 任务名 兜底
   String get displayTitle {
@@ -231,6 +235,8 @@ class UpdateCheckInfo {
   final String notes;
   final String pageUrl;
   final String zipUrl;
+  final String updateMode; // patch=增量补丁包 | full=全量包
+  final int zipSize; // 更新包字节数（API 限额回退时为 0，未知）
   final String error;
 
   const UpdateCheckInfo({
@@ -240,10 +246,19 @@ class UpdateCheckInfo {
     required this.notes,
     required this.pageUrl,
     required this.zipUrl,
+    this.updateMode = 'full',
+    this.zipSize = 0,
     required this.error,
   });
 
   bool get hasError => error.isNotEmpty;
+  bool get isPatch => updateMode == 'patch';
+
+  String get sizeLabel {
+    if (zipSize <= 0) return '';
+    final mb = zipSize / 1024 / 1024;
+    return mb >= 1 ? '${mb.toStringAsFixed(mb >= 10 ? 0 : 1)} MB' : '${(zipSize / 1024).toStringAsFixed(0)} KB';
+  }
 
   factory UpdateCheckInfo.fromJson(Map<String, dynamic> json) =>
       UpdateCheckInfo(
@@ -253,6 +268,8 @@ class UpdateCheckInfo {
         notes: json['notes']?.toString() ?? '',
         pageUrl: json['page_url']?.toString() ?? '',
         zipUrl: json['zip_url']?.toString() ?? '',
+        updateMode: json['update_mode']?.toString() ?? 'full',
+        zipSize: (json['zip_size'] as num?)?.toInt() ?? 0,
         error: json['error']?.toString() ?? '',
       );
 }

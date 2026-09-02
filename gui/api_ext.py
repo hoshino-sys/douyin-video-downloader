@@ -16,6 +16,7 @@ from src.custom import __VERSION__, PROJECT_ROOT
 from src.models import Settings
 from src.tools import Browser
 from gui import platforms_yt
+from gui.task_control import TaskControl, TaskInterrupted
 
 if TYPE_CHECKING:
     from src.application.main_server import APIServer
@@ -180,6 +181,8 @@ def _check_update() -> dict:
         "notes": "",
         "page_url": RELEASES,
         "zip_url": "",
+        "update_mode": "full",
+        "zip_size": 0,
         "published_at": "",
         "error": "",
     }
@@ -221,15 +224,42 @@ def _check_update() -> dict:
     result["latest"] = tag
     result["notes"] = str(data.get("body") or "")[:1200]
     result["published_at"] = str(data.get("published_at") or "")
-    zips = [
-        str(a.get("browser_download_url") or "")
-        for a in (data.get("assets") or [])
-        if str(a.get("name") or "").lower().endswith(".zip")
-    ]
-    # 优先本应用命名规则的分发包（历史上有 CI 注入的同页资产，按名字区分）
-    preferred = [u for u in zips if "夜星视频下载器" in u]
-    result["zip_url"] = (preferred or zips or [""])[0]
-    result["update_available"] = bool(tag) and nums(tag) > nums(__VERSION__)
+    update_available = bool(tag) and nums(tag) > nums(__VERSION__)
+    result["update_available"] = update_available
+
+    # 资产名均为 ASCII（GitHub 会剔除中文名），全量包按命名规则识别
+    full_url, full_size = "", 0
+    patch_base, patch_url, patch_size = "", "", 0
+    for a in data.get("assets") or []:
+        name = str(a.get("name") or "").lower()
+        url = str(a.get("browser_download_url") or "")
+        size = int(a.get("size") or 0)
+        if name == f"yexing-video-downloader_v{tag}.zip":
+            full_url, full_size = url, size
+            continue
+        m = re.fullmatch(
+            rf"yexing-video-downloader_v([\d.]+)_patch_v{re.escape(tag)}\.zip",
+            name,
+        )
+        if m:
+            patch_base, patch_url, patch_size = m.group(1), url, size
+    if full_url == "":  # 兜底：任何 zip 资产（防命名规则变动后无包可选）
+        for a in data.get("assets") or []:
+            if str(a.get("name") or "").lower().endswith(".zip"):
+                full_url = str(a.get("browser_download_url") or "")
+                full_size = int(a.get("size") or 0)
+                break
+
+    # 增量补丁只在「当前版本 == 补丁基准版本」时使用，否则回退全量包；
+    # zip_size 供前端展示「增量更新（约 xx MB）」
+    if update_available and patch_url and nums(patch_base) == nums(__VERSION__):
+        result["zip_url"] = patch_url
+        result["update_mode"] = "patch"
+        result["zip_size"] = patch_size
+    else:
+        result["zip_url"] = full_url
+        result["update_mode"] = "full"
+        result["zip_size"] = full_size
     return result
 
 
@@ -241,6 +271,7 @@ _RELEASE_DOWNLOAD_PREFIX = (
 class TaskManager:
     def __init__(self):
         self._tasks: dict[str, dict] = {}
+        self._controls: dict[str, TaskControl] = {}
 
     def create(
         self,
@@ -266,6 +297,12 @@ class TaskManager:
         }
         self._tasks[task_id] = task
         return task
+
+    def bind(self, task_id: str, control: TaskControl) -> None:
+        self._controls[task_id] = control
+
+    def control(self, task_id: str) -> TaskControl | None:
+        return self._controls.get(task_id)
 
     def append_log(self, task: dict, text: str) -> None:
         logs = task.get("logs")
@@ -309,6 +346,14 @@ class TaskManager:
         task["status"] = "success" if ok else "failed"
         task["message"] = message
         task["finished_at"] = datetime.now().isoformat(timespec="seconds")
+
+    def set_status(self, task: dict, status: str, message: str = "") -> None:
+        """状态流转：running/paused 视为未结束（不写 finished_at）。"""
+        task["status"] = status
+        if message:
+            task["message"] = message
+        if status not in ("running", "paused"):
+            task["finished_at"] = datetime.now().isoformat(timespec="seconds")
 
     def get(self, task_id: str) -> dict | None:
         return self._tasks.get(task_id)
@@ -374,6 +419,33 @@ def setup_gui_routes(server: "APIServer", app: "TikTokDownloader") -> None:
         name = _PLATFORM_DIR_NAMES.get(platform, platform)
         return base / name
 
+    def _on_interrupt(task: dict, ctl: TaskControl) -> None:
+        """asyncio 任务被 cancel() 后按 request 标记暂停/取消。"""
+        action = ctl.request or "cancel"
+        ctl.request = None
+        if action == "pause":
+            tasks.set_status(task, "paused", "已暂停（进度保留，可继续）")
+            tasks.append_log(task, "任务已暂停，继续时自动断点续传")
+        else:
+            tasks.set_status(task, "cancelled", "任务已取消")
+            tasks.append_log(task, "任务已取消")
+
+    def _spawn(task: dict, ctl: TaskControl, runner) -> None:
+        """启动任务协程并注册控制句柄；runner 为可重复调用的协程函数（恢复用）。"""
+
+        async def wrapped():
+            try:
+                await runner()
+            except asyncio.CancelledError:
+                _on_interrupt(task, ctl)
+            except Exception as e:
+                tasks.append_log(task, f"任务异常：{e}")
+                tasks.finish(task, False, str(e))
+
+        ctl.rerun = wrapped
+        ctl.aio_task = aio_create_task(wrapped())
+        tasks.bind(task["id"], ctl)
+
     logger = server.parameter.logger
     _orig_info = logger.info
     _orig_warning = logger.warning
@@ -415,7 +487,8 @@ def setup_gui_routes(server: "APIServer", app: "TikTokDownloader") -> None:
 
     @fast_app.get("/api/gui/health", tags=[GUI_TAG], include_in_schema=False)
     async def health():
-        return {"status": "ok"}
+        # version 供打包脚本补丁验证与前端诊断使用
+        return {"status": "ok", "version": __VERSION__}
 
     @fast_app.get("/api/gui/bootstrap", tags=[GUI_TAG])
     async def bootstrap(token: str = Depends(token_dependency)):
@@ -516,7 +589,10 @@ def setup_gui_routes(server: "APIServer", app: "TikTokDownloader") -> None:
     async def cookie_paste(req: PasteRequest, token: str = Depends(token_dependency)):
         text = req.text.strip()
         if not app.cookie.validate_cookie_minimal(text):
-            return {"success": False, "message": "内容不是有效的 Cookie 格式，请检查后重试"}
+            return {
+                "success": False,
+                "message": "内容不是有效的 Cookie 格式，请检查后重试",
+            }
         cookie_dict = app.cookie.extract(text, key="cookie", platform="抖音")
         server.parameter.set_cookie(cookie_dict, "")
         server.parameter.set_headers_cookie()
@@ -560,7 +636,9 @@ def setup_gui_routes(server: "APIServer", app: "TikTokDownloader") -> None:
         )
 
     @fast_app.post("/api/gui/task", tags=[GUI_TAG])
-    async def create_gui_task(req: GuiTaskRequest, token: str = Depends(token_dependency)):
+    async def create_gui_task(
+        req: GuiTaskRequest, token: str = Depends(token_dependency)
+    ):
         is_tiktok = req.platform.lower() == "tiktok"
 
         if req.type == "detail":
@@ -582,32 +660,28 @@ def setup_gui_routes(server: "APIServer", app: "TikTokDownloader") -> None:
                     "tiktok" if is_tiktok else "douyin",
                 )
             )
-            tasks.append_log(task, f"开始下载单个作品，平台={'TikTok' if is_tiktok else '抖音'}")
+            tasks.append_log(
+                task, f"开始下载单个作品，平台={'TikTok' if is_tiktok else '抖音'}"
+            )
             desc = req.data.get("desc", "") or req.data.get("id", "")
             if desc:
                 tasks.append_log(task, f"作品：{str(desc)[:80]}")
             tasks.append_log(task, f"保存目录：{task['download_dir']}")
 
             async def run_detail():
-                try:
-                    tasks.append_log(task, "正在请求并下载文件…")
-                    if custom_dir is not None:
-                        async with _dir_lock:
-                            with _swap_root_custom(custom_dir):
-                                await server.downloader.run(
-                                    [req.data], "detail", tiktok=is_tiktok
-                                )
-                    else:
-                        await server.downloader.run(
-                            [req.data], "detail", tiktok=is_tiktok
-                        )
-                    tasks.append_log(task, "下载流程结束")
-                    tasks.finish(task, True, "下载完成")
-                except Exception as e:
-                    tasks.append_log(task, f"任务异常：{e}")
-                    tasks.finish(task, False, str(e))
+                tasks.append_log(task, "正在请求并下载文件…")
+                if custom_dir is not None:
+                    async with _dir_lock:
+                        with _swap_root_custom(custom_dir):
+                            await server.downloader.run(
+                                [req.data], "detail", tiktok=is_tiktok
+                            )
+                else:
+                    await server.downloader.run([req.data], "detail", tiktok=is_tiktok)
+                tasks.append_log(task, "下载流程结束")
+                tasks.finish(task, True, "下载完成")
 
-            aio_create_task(run_detail())
+            _spawn(task, TaskControl(asyncio_based=True), run_detail)
             return {"status": "success", "task": task}
 
         if req.type == "account":
@@ -628,43 +702,45 @@ def setup_gui_routes(server: "APIServer", app: "TikTokDownloader") -> None:
                     "tiktok" if is_tiktok else "douyin",
                 )
             )
-            tasks.append_log(task, f"开始批量下载，账号={req.sec_user_id} 平台={'TikTok' if is_tiktok else '抖音'} tab={req.tab}")
+            tasks.append_log(
+                task,
+                f"开始批量下载，账号={req.sec_user_id} 平台={'TikTok' if is_tiktok else '抖音'} tab={req.tab}",
+            )
             if req.earliest or req.latest:
-                tasks.append_log(task, f"日期筛选：{req.earliest or '不限'} 至 {req.latest or '不限'}")
+                tasks.append_log(
+                    task,
+                    f"日期筛选：{req.earliest or '不限'} 至 {req.latest or '不限'}",
+                )
             tasks.append_log(task, f"保存目录：{task['download_dir']}")
             tasks.append_log(task, "正在获取账号作品列表，这可能需要一些时间…")
 
             async def run_account():
-                try:
-                    if custom_dir is not None:
-                        async with _dir_lock:
-                            with _swap_root_custom(custom_dir):
-                                await server.deal_account_detail(
-                                    index=0,
-                                    sec_user_id=req.sec_user_id,
-                                    tab=req.tab,
-                                    earliest=req.earliest,
-                                    latest=req.latest,
-                                    tiktok=is_tiktok,
-                                    api=False,
-                                )
-                    else:
-                        await server.deal_account_detail(
-                            index=0,
-                            sec_user_id=req.sec_user_id,
-                            tab=req.tab,
-                            earliest=req.earliest,
-                            latest=req.latest,
-                            tiktok=is_tiktok,
-                            api=False,
-                        )
-                    tasks.append_log(task, "批量任务流程结束")
-                    tasks.finish(task, True, "任务完成，可在保存目录查看文件")
-                except Exception as e:
-                    tasks.append_log(task, f"任务异常：{e}")
-                    tasks.finish(task, False, str(e))
+                if custom_dir is not None:
+                    async with _dir_lock:
+                        with _swap_root_custom(custom_dir):
+                            await server.deal_account_detail(
+                                index=0,
+                                sec_user_id=req.sec_user_id,
+                                tab=req.tab,
+                                earliest=req.earliest,
+                                latest=req.latest,
+                                tiktok=is_tiktok,
+                                api=False,
+                            )
+                else:
+                    await server.deal_account_detail(
+                        index=0,
+                        sec_user_id=req.sec_user_id,
+                        tab=req.tab,
+                        earliest=req.earliest,
+                        latest=req.latest,
+                        tiktok=is_tiktok,
+                        api=False,
+                    )
+                tasks.append_log(task, "批量任务流程结束")
+                tasks.finish(task, True, "任务完成，可在保存目录查看文件")
 
-            aio_create_task(run_account())
+            _spawn(task, TaskControl(asyncio_based=True), run_account)
             return {"status": "success", "task": task}
 
         if req.type == "ytdlp":
@@ -692,15 +768,14 @@ def setup_gui_routes(server: "APIServer", app: "TikTokDownloader") -> None:
             tasks.append_log(task, f"链接：{req.url.strip()[:120]}")
 
             async def run_ytdlp():
-                try:
-                    await platforms_yt.run_ytdlp_download(
-                        task, tasks, req.url, root, req.format_id
-                    )
-                except Exception as e:
-                    tasks.append_log(task, f"任务异常：{e}")
-                    tasks.finish(task, False, str(e))
+                # 暂停/取消在 run_ytdlp_download 内部处理（线程事件通道），
+                # TaskInterrupted 不会抛到这里
+                await platforms_yt.run_ytdlp_download(
+                    task, tasks, req.url, root, req.format_id, control=ctl
+                )
 
-            aio_create_task(run_ytdlp())
+            ctl = TaskControl(asyncio_based=False)
+            _spawn(task, ctl, run_ytdlp)
             return {"status": "success", "task": task}
 
         return {"status": "failed", "message": "不支持的任务类型"}
@@ -725,8 +800,84 @@ def setup_gui_routes(server: "APIServer", app: "TikTokDownloader") -> None:
             raise HTTPException(status_code=404, detail="任务不存在")
         return task
 
+    @fast_app.post("/api/gui/task/{task_id}/pause", tags=[GUI_TAG])
+    async def pause_task(task_id: str, token: str = Depends(token_dependency)):
+        task = tasks.get(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="任务不存在")
+        if task["status"] != "running":
+            return {"success": False, "message": "任务不在运行中"}
+        ctl = tasks.control(task_id)
+        if not ctl:
+            return {"success": False, "message": "该任务不支持暂停"}
+        if ctl.asyncio_based:
+            ctl.request = "pause"
+            if ctl.aio_task is not None:
+                ctl.aio_task.cancel()
+        else:
+            ctl.pause_event.set()
+        return {"success": True, "task": task}
+
+    @fast_app.post("/api/gui/task/{task_id}/resume", tags=[GUI_TAG])
+    async def resume_task(task_id: str, token: str = Depends(token_dependency)):
+        task = tasks.get(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="任务不存在")
+        if task["status"] != "paused":
+            return {"success": False, "message": "任务未处于暂停状态"}
+        ctl = tasks.control(task_id)
+        if not ctl or ctl.rerun is None:
+            return {
+                "success": False,
+                "message": "缺少任务上下文，无法恢复，请重新创建任务",
+            }
+        ctl.request = None
+        ctl.pause_event.clear()
+        ctl.cancel_event.clear()
+        tasks.set_status(task, "running", "已恢复")
+        tasks.append_log(task, "继续任务…")
+        aio_create_task(ctl.rerun())
+        return {"success": True, "task": task}
+
+    @fast_app.post("/api/gui/task/{task_id}/cancel", tags=[GUI_TAG])
+    async def cancel_task(task_id: str, token: str = Depends(token_dependency)):
+        from pathlib import Path
+
+        task = tasks.get(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="任务不存在")
+        ctl = tasks.control(task_id)
+        if task["status"] == "running":
+            if not ctl:
+                return {"success": False, "message": "该任务不支持取消"}
+            if ctl.asyncio_based:
+                ctl.request = "cancel"
+                if ctl.aio_task is not None:
+                    ctl.aio_task.cancel()
+            else:
+                ctl.cancel_event.set()
+            return {"success": True, "task": task}
+        if task["status"] == "paused":
+            # 暂停中（执行体已退出）直接标记取消；更新包任务的半截文件
+            # 与运行中取消保持一致：放弃即删除
+            if ctl is not None:
+                ctl.request = None
+                ctl.cancel_event.set()
+                if ctl.artifact is not None:
+                    try:
+                        Path(ctl.artifact).unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                    tasks.append_log(task, "已删除未完成的更新包")
+            tasks.set_status(task, "cancelled", "任务已取消")
+            tasks.append_log(task, "任务已取消")
+            return {"success": True, "task": task}
+        return {"success": False, "message": "任务已结束"}
+
     @fast_app.post("/api/gui/open_folder", tags=[GUI_TAG])
-    async def open_folder(req: OpenFolderRequest, token: str = Depends(token_dependency)):
+    async def open_folder(
+        req: OpenFolderRequest, token: str = Depends(token_dependency)
+    ):
         import subprocess
         import sys
         from pathlib import Path
@@ -782,37 +933,49 @@ def setup_gui_routes(server: "APIServer", app: "TikTokDownloader") -> None:
         task["download_dir"] = str(target_dir)
         tasks.append_log(task, f"开始下载更新包：{filename}")
 
+        control = TaskControl(asyncio_based=False)
+        control.artifact = dest  # 暂停态取消时由取消端点清理半截包
+        resume_part = [0]  # 暂停后恢复的起始字节（GitHub 资产支持 Range）
+
         def work() -> None:
-            request = urllib.request.Request(
-                url, headers={"User-Agent": USERAGENT}
-            )
-            with urllib.request.urlopen(request, timeout=60) as resp, open(
-                dest, "wb"
-            ) as fh:
-                total = int(resp.headers.get("Content-Length") or 0)
-                done = 0
-                start = time.time()
-                last_tick = 0.0
-                while True:
-                    chunk = resp.read(262144)
-                    if not chunk:
-                        break
-                    fh.write(chunk)
-                    done += len(chunk)
-                    now = time.time()
-                    if now - last_tick >= 0.5:
-                        elapsed = max(now - start, 0.001)
-                        speed = done / elapsed
-                        eta = (total - done) / speed if total and speed else None
-                        tasks.set_progress(
-                            task,
-                            done,
-                            total,
-                            message=filename,
-                            speed=speed,
-                            eta=eta,
-                        )
-                        last_tick = now
+            part = resume_part[0]
+            headers = {"User-Agent": USERAGENT}
+            if part:
+                headers["Range"] = f"bytes={part}-"
+            request = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(request, timeout=60) as resp:
+                if part and resp.status != 206:
+                    part = 0  # 服务器不支持续传，从头下载
+                total = part + int(resp.headers.get("Content-Length") or 0)
+                done = part
+                with open(dest, "ab" if part else "wb") as fh:
+                    start = time.time()
+                    last_tick = 0.0
+                    while True:
+                        # 暂停/取消检查点：半截文件保留，恢复时 Range 续传
+                        if control.cancel_event.is_set():
+                            raise TaskInterrupted("cancel")
+                        if control.pause_event.is_set():
+                            raise TaskInterrupted("pause")
+                        chunk = resp.read(262144)
+                        if not chunk:
+                            break
+                        fh.write(chunk)
+                        done += len(chunk)
+                        now = time.time()
+                        if now - last_tick >= 0.5:
+                            elapsed = max(now - start, 0.001)
+                            speed = (done - part) / elapsed
+                            eta = (total - done) / speed if total and speed else None
+                            tasks.set_progress(
+                                task,
+                                done,
+                                total,
+                                message=filename,
+                                speed=speed,
+                                eta=eta,
+                            )
+                            last_tick = now
 
         def finalize() -> None:
             tasks.set_progress(task, 1, 1, message="下载完成")
@@ -829,10 +992,19 @@ def setup_gui_routes(server: "APIServer", app: "TikTokDownloader") -> None:
             try:
                 await asyncio.to_thread(work)
                 finalize()
+            except TaskInterrupted as e:
+                resume_part[0] = dest.stat().st_size if dest.exists() else 0
+                if e.action == "pause":
+                    tasks.set_status(task, "paused", "已暂停（进度保留，可继续）")
+                    tasks.append_log(task, "更新包下载已暂停，继续时自动断点续传")
+                else:
+                    dest.unlink(missing_ok=True)  # 取消即放弃，清掉半截包
+                    tasks.set_status(task, "cancelled", "任务已取消")
+                    tasks.append_log(task, "更新包下载已取消")
             except Exception as e:
                 message = f"更新包下载失败：{e}"[:200]
                 tasks.append_log(task, message)
                 tasks.finish(task, False, message)
 
-        aio_create_task(run_update())
+        _spawn(task, control, run_update)
         return {"status": "success", "task": task}

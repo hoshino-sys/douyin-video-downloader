@@ -24,10 +24,12 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-RELEASE_DIR_NAME = "夜星视频下载器_v5.9.2"
+RELEASE_DIR_NAME = "夜星视频下载器_v5.9.3"
 REL = ROOT / "release" / RELEASE_DIR_NAME
 DIST_BACKEND = ROOT / "dist" / "夜星视频下载器后端"
-FLUTTER_RELEASE = ROOT / "gui" / "flutter_app" / "build" / "windows" / "x64" / "runner" / "Release"
+FLUTTER_RELEASE = (
+    ROOT / "gui" / "flutter_app" / "build" / "windows" / "x64" / "runner" / "Release"
+)
 VENDOR_FFMPEG = ROOT / "vendor" / "ffmpeg"
 VENDOR_QJS = ROOT / "vendor" / "qjs" / "qjs.exe"
 APP_EXE = "夜星视频下载器.exe"
@@ -55,7 +57,9 @@ def check_no_running() -> None:
     try:
         result = subprocess.run(
             [
-                "powershell", "-NoProfile", "-Command",
+                "powershell",
+                "-NoProfile",
+                "-Command",
                 "Get-Process | Where-Object { $_.Path } "
                 "| ForEach-Object { $_.Path.ToLower() }",
             ],
@@ -69,9 +73,7 @@ def check_no_running() -> None:
         str(ROOT / name).lower().rstrip("\\") + os.sep
         for name in ("release", "dist", os.path.join("gui", "flutter_app", "build"))
     )
-    locked = sorted(
-        {p for p in paths if p.startswith(prefixes)}
-    )
+    locked = sorted({p for p in paths if p.startswith(prefixes)})
     if locked:
         fail("以下进程正在使用构建目录，请先退出应用再打包：\n  " + "\n  ".join(locked))
 
@@ -101,14 +103,17 @@ def bootstrap_release_dir() -> None:
 def ensure_vendor_ffmpeg() -> None:
     if (VENDOR_FFMPEG / "ffmpeg.exe").exists():
         return
-    legacy = REL / "ffmpeg.exe"
-    if legacy.exists():
+    # 救援源按优先级：旧版发布根（v5.9.2 前布局）、发布包 backend/_internal
+    # （v5.9.3 起发布包只保留 _internal 一份，发布根不再复制）
+    for legacy in (REL / "ffmpeg.exe", REL / "backend" / "_internal" / "ffmpeg.exe"):
+        if not legacy.exists():
+            continue
         VENDOR_FFMPEG.mkdir(parents=True, exist_ok=True)
         for name in ("ffmpeg.exe", "ffprobe.exe"):
-            src = REL / name
+            src = legacy.parent / name
             if src.exists():
                 shutil.copy2(src, VENDOR_FFMPEG / name)
-        log("已从现有发布包复制 ffmpeg 到 vendor/ffmpeg/")
+        log(f"已从 {legacy.parent} 复制 ffmpeg 到 vendor/ffmpeg/")
         return
     fail("缺少 vendor/ffmpeg/ffmpeg.exe（音视频合并必需），请先放置该文件")
 
@@ -140,7 +145,9 @@ def build_backend() -> None:
             "无 node/deno 的电脑将无法解析 YouTube，请检查 backend.spec"
         )
     if not (internal / "ffmpeg.exe").exists():
-        log("[警告] 后端产物未内置 ffmpeg.exe（不影响根目录 ffmpeg 的查找）")
+        log(
+            "[警告] 后端产物未内置 ffmpeg.exe（_MEIPASS 兜底不可用，将无法自动合并音视频）"
+        )
 
 
 def build_frontend() -> None:
@@ -243,13 +250,8 @@ def sync_fallback_sources() -> None:
             shutil.copytree(src, REL / name, dirs_exist_ok=True)
 
 
-def copy_ffmpeg() -> None:
-    for name in ("ffmpeg.exe", "ffprobe.exe"):
-        shutil.copy2(VENDOR_FFMPEG / name, REL / name)
-
-
 def make_zip() -> None:
-    log("== [4/4] 生成干净分发包…")
+    log("== [5/6] 生成全量分发包…")
     # 注意不能用 with_suffix：目录名含点（_v5.8）会被截断成 _v5.zip
     zip_path = REL.parent / (REL.name + ".zip")
     if zip_path.exists():
@@ -286,7 +288,9 @@ def make_zip() -> None:
         if zf.testzip() is not None:
             zip_path.unlink(missing_ok=True)
             fail("分发包 CRC 校验失败，已删除，请重新运行 --zip")
-    log(f"分发包: {zip_path}（{count} 个文件, {size_mb:.0f} MB, 已排除本机 Cookie/设置/下载，CRC 校验通过）")
+    log(
+        f"分发包: {zip_path}（{count} 个文件, {size_mb:.0f} MB, 已排除本机 Cookie/设置/下载，CRC 校验通过）"
+    )
 
 
 def verify_zip(zip_path: Path) -> None:
@@ -295,7 +299,7 @@ def verify_zip(zip_path: Path) -> None:
     import time
     import urllib.request
 
-    log("== [5/5] 分发包冒烟测试（解压并启动后端）…")
+    log("== [6/6] 全量包冒烟测试（解压并启动后端）…")
     with tempfile.TemporaryDirectory(
         prefix="douk_zip_smoke_", ignore_cleanup_errors=True
     ) as tmp:
@@ -343,14 +347,21 @@ def verify_zip(zip_path: Path) -> None:
                 pass
 
 
-def cleanup_old_releases() -> None:
-    """发布成功后清理旧版本产物（保留当前版本目录与 zip）。"""
+def cleanup_old_releases(keep_patch: Path | None = None) -> None:
+    """发布成功后清理旧版本产物（保留当前版本目录、zip 与本次增量补丁）。
+
+    注意：清理后 find_previous_release() 将找不到基准，因此增量补丁
+    （make_patch_zip/verify_patch）必须在本次调用之前完成。"""
     keep_zip = REL.parent / (REL.name + ".zip")
     removed = []
     for p in REL.parent.iterdir():
-        if p == REL or p == keep_zip:
+        if p == REL or p == keep_zip or p == keep_patch:
             continue
-        if not p.name.startswith("夜星视频下载器_v5."):
+        if p.name.startswith("夜星视频下载器_patch_") or p.name.startswith(
+            "夜星视频下载器_v5."
+        ):
+            pass
+        else:
             continue
         try:
             if p.is_dir():
@@ -364,9 +375,243 @@ def cleanup_old_releases() -> None:
         log("已清理旧版本产物：" + "、".join(removed))
 
 
+def _release_version_text(p: Path) -> str:
+    m = re.search(r"_v(\d+(?:\.\d+)*)", p.name)
+    return m.group(1) if m else ""
+
+
+def find_previous_release() -> Path | None:
+    """增量补丁基准：当前版本之外最新的旧版本发布目录（数字比较）。"""
+    candidates = sorted(
+        (p for p in REL.parent.glob("夜星视频下载器_v5.*") if p.is_dir() and p != REL),
+        key=_release_version_key,
+    )
+    return candidates[-1] if candidates else None
+
+
+_PATCH_EXCLUDE_TOP = ("UserData", "Downloads", "Volume")
+_PATCH_EXCLUDE_NAMES = {"__pycache__", ".DS_Store", "Thumbs.db"}
+
+
+def _patch_skip(path: Path, base: Path) -> bool:
+    """补丁 diff 范围排除：本机数据目录（新旧布局）与杂散 zip。"""
+    rel = path.relative_to(base)
+    if rel.parts and rel.parts[0] in _PATCH_EXCLUDE_TOP:
+        return True
+    if (
+        len(rel.parts) >= 3
+        and rel.parts[:2] == ("backend", "_internal")
+        and rel.parts[2] in ("UserData", "Volume")
+    ):
+        return True
+    if path.name in _PATCH_EXCLUDE_NAMES:
+        return True
+    if path.parent == base and path.suffix == ".zip":
+        return True
+    return False
+
+
+def make_patch_zip() -> Path | None:
+    """与上一版本发布目录逐文件 diff，生成只含变更文件的增量补丁包。
+
+    补丁 zip 内不带顶层文件夹（解压即覆盖安装目录），附 补丁说明.txt、
+    removed.txt 与可选的 清理已移除文件.bat。"""
+    import hashlib
+
+    log("== [4/6] 生成增量补丁包（与上一版 diff）…")
+    prev = find_previous_release()
+    if prev is None:
+        log("[提示] 未找到上一版本发布目录，本次仅发布全量包")
+        return None
+    prev_version = _release_version_text(prev)
+    new_version = _release_version_text(REL)
+    if not prev_version or prev_version == new_version:
+        log("[提示] 补丁基准版本无效，跳过增量补丁")
+        return None
+
+    def digest(path: Path) -> str:
+        h = hashlib.sha256()
+        with path.open("rb") as f:
+            for block in iter(lambda: f.read(1024 * 1024), b""):
+                h.update(block)
+        return h.hexdigest()
+
+    old_files = {
+        p.relative_to(prev).as_posix(): p
+        for p in prev.rglob("*")
+        if p.is_file() and not _patch_skip(p, prev)
+    }
+    changed = []
+    new_rels = set()
+    for path in sorted(REL.rglob("*")):
+        if not path.is_file() or _patch_skip(path, REL):
+            continue
+        rel = path.relative_to(REL).as_posix()
+        new_rels.add(rel)
+        old = old_files.get(rel)
+        if old is None:
+            changed.append(path)
+        elif old.stat().st_size != path.stat().st_size or digest(old) != digest(path):
+            changed.append(path)
+    removed = sorted(set(old_files) - new_rels)
+    if not changed and not removed:
+        log("[提示] 与上一版无文件差异，跳过增量补丁")
+        return None
+
+    patch_path = REL.parent / f"夜星视频下载器_patch_v{prev_version}_v{new_version}.zip"
+    if patch_path.exists():
+        patch_path.unlink()
+    with zipfile.ZipFile(patch_path, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
+        for path in changed:
+            zf.write(path, path.relative_to(REL))
+        if removed:
+            zf.writestr("removed.txt", "\n".join(removed) + "\n")
+            zf.writestr("清理已移除文件.bat", _PATCH_CLEANUP_BAT)
+        zf.writestr(
+            "补丁说明.txt",
+            _patch_note_text(prev_version, new_version, len(changed), removed),
+        )
+    size_mb = patch_path.stat().st_size / 1024 / 1024
+    log(
+        f"增量补丁包: {patch_path.name}"
+        f"（变更 {len(changed)} 个文件, 移除 {len(removed)} 个, {size_mb:.1f} MB）"
+    )
+    return patch_path
+
+
+_PATCH_CLEANUP_BAT = "\r\n".join(
+    [
+        "@echo off",
+        "chcp 65001 >nul",
+        "echo 按补丁清单清理新版本已移除的旧文件…",
+        "powershell -NoProfile -ExecutionPolicy Bypass -Command "
+        "\"Get-Content -LiteralPath 'removed.txt' -Encoding UTF8 | "
+        "ForEach-Object { $p = $_.Trim(); if ($p -and "
+        "(Test-Path -LiteralPath $p)) { Remove-Item -LiteralPath $p -Force; "
+        "Write-Host ('已删除 ' + $p) } }\"",
+        "echo 清理完成。",
+        "pause",
+        "",
+    ]
+)
+
+
+def _patch_note_text(
+    prev_version: str, new_version: str, changed: int, removed: list[str]
+) -> str:
+    lines = [
+        f"夜星视频下载器 增量更新补丁 v{prev_version} → v{new_version}",
+        "=" * 46,
+        "",
+        f"本补丁只包含与 v{prev_version} 有差异的文件（共 {changed} 个），"
+        "远小于完整安装包。",
+        "",
+        "使用方法：",
+        "1. 退出正在运行的 夜星视频下载器",
+        "2. 将本压缩包中的全部文件解压到软件安装目录，选择「替换目标中的文件」",
+    ]
+    if removed:
+        lines.append(
+            "3. 双击运行「清理已移除文件.bat」，删除本版本不再需要的旧文件"
+            f"（共 {len(removed)} 个）"
+        )
+        lines.append("4. 重新启动 夜星视频下载器.exe，在 设置-关于 中确认版本已更新")
+    else:
+        lines.append("3. 重新启动 夜星视频下载器.exe，在 设置-关于 中确认版本已更新")
+    lines += [
+        "",
+        f"注意：本补丁仅适用于从 v{prev_version} 升级；更旧的版本请下载完整安装包。",
+        "UserData 与 Downloads 数据目录不受影响。",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def verify_patch(patch_path: Path) -> None:
+    """补丁端到端验证：上一版完整安装副本 + 补丁 → 启动 → 确认版本升级。
+
+    基准优先用上一版分发 zip（等同用户手里的安装包，含发布根 ffmpeg 的
+    旧布局），没有 zip 时复制上一版目录（排除数据目录）。"""
+    import json
+    import tempfile
+    import time
+    import urllib.request
+
+    prev = find_previous_release()
+    if prev is None:
+        log("[提示] 无上一版目录，跳过补丁端到端验证")
+        return
+    new_version = _release_version_text(REL)
+    log(f"== 补丁端到端验证（{prev.name} + 补丁 → 应升级为 v{new_version}）…")
+    with tempfile.TemporaryDirectory(
+        prefix="douk_patch_smoke_", ignore_cleanup_errors=True
+    ) as tmp:
+        prev_zip = REL.parent / (prev.name + ".zip")
+        if prev_zip.exists():
+            with zipfile.ZipFile(prev_zip) as zf:
+                zf.extractall(tmp)
+            base = Path(tmp) / prev.name
+        else:
+            base = Path(tmp) / prev.name
+            shutil.copytree(
+                prev,
+                base,
+                ignore=shutil.ignore_patterns(
+                    "UserData", "Downloads", "Volume", "__pycache__"
+                ),
+            )
+        with zipfile.ZipFile(patch_path) as zf:
+            zf.extractall(base)
+        backend_exe = base / "backend" / BACKEND_EXE
+        if not backend_exe.exists():
+            fail("补丁验证失败：应用补丁后缺少后端文件")
+        env = {**os.environ, "DOUK_HOME": str(base)}
+        for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+            env.pop(key, None)
+        proc = subprocess.Popen(
+            [str(backend_exe), "--host", "127.0.0.1", "--port", "5596"],
+            cwd=backend_exe.parent,
+            env=env,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            deadline = time.time() + 90
+            version = ""
+            while time.time() < deadline:
+                if proc.poll() is not None:
+                    fail(f"补丁验证失败：后端启动即退出（代码 {proc.returncode}）")
+                try:
+                    with urllib.request.urlopen(
+                        "http://127.0.0.1:5596/api/gui/health", timeout=2
+                    ) as resp:
+                        data = json.loads(resp.read() or b"{}")
+                        version = str(data.get("version") or "")
+                        if resp.status == 200 and version:
+                            break
+                except Exception:
+                    pass
+                time.sleep(1)
+            if version != new_version:
+                fail(
+                    f"补丁验证失败：健康检查版本为 {version or '无'}，"
+                    f"应为 {new_version}"
+                )
+            log(f"补丁验证通过：上一版副本应用补丁后运行版本 v{version}")
+        finally:
+            proc.kill()
+            try:
+                proc.wait(timeout=10)
+            except Exception:
+                pass
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="夜星视频下载器 打包脚本")
-    parser.add_argument("--zip", action="store_true", help="生成干净分发包（排除个人数据）")
+    parser.add_argument(
+        "--zip", action="store_true", help="生成干净分发包（排除个人数据）"
+    )
     args = parser.parse_args()
 
     if os.name == "nt":
@@ -386,14 +631,16 @@ def main() -> None:
     assemble_backend()
     assemble_frontend()
     sync_fallback_sources()
-    copy_ffmpeg()
     write_launch_bat()
     write_readme_txt()
     log(f"打包完成: {REL}")
     if args.zip:
+        patch = make_patch_zip()
         make_zip()
         verify_zip(REL.parent / (REL.name + ".zip"))
-        cleanup_old_releases()
+        if patch is not None:
+            verify_patch(patch)
+        cleanup_old_releases(keep_patch=patch)
 
 
 if __name__ == "__main__":

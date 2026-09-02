@@ -95,6 +95,7 @@ class _TasksPageState extends State<TasksPage> {
                           _expanded.add(task.id);
                         }
                       }),
+                      onAction: _refresh,
                     );
                   },
                 ),
@@ -106,8 +107,41 @@ class _TaskCard extends StatelessWidget {
   final TaskInfo task;
   final bool expanded;
   final VoidCallback onToggle;
+  final VoidCallback onAction;
 
-  const _TaskCard({required this.task, required this.expanded, required this.onToggle});
+  const _TaskCard({
+    required this.task,
+    required this.expanded,
+    required this.onToggle,
+    required this.onAction,
+  });
+
+  /// 暂停/继续/取消。取消需二次确认（放弃本次任务）。
+  Future<void> _act(BuildContext context, String action) async {
+    if (action == 'cancel') {
+      final sure = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('取消任务'),
+          content: const Text('确定取消该任务吗？已下载的部分会保留，但任务不会再继续。'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('返回')),
+            FilledButton.tonal(onPressed: () => Navigator.pop(ctx, true), child: const Text('取消任务')),
+          ],
+        ),
+      );
+      if (sure != true) return;
+    }
+    try {
+      final err = await App.client!.taskAction(task.id, action);
+      if (context.mounted) {
+        AppToast.show(context, err ?? '操作已提交');
+      }
+    } catch (e) {
+      if (context.mounted) AppToast.show(context, '操作失败：$e');
+    }
+    onAction();
+  }
 
   static String _fmtBytes(num bytes) {
     if (bytes < 1024) return '${bytes.toStringAsFixed(0)} B';
@@ -126,16 +160,20 @@ class _TaskCard extends StatelessWidget {
     return h > 0 ? '$h:${two(m)}:${two(s)}' : '${two(m)}:${two(s)}';
   }
 
-  /// 运行中的进度明细行：百分比 · 已下载/总量 · 速度 · 剩余时间
+  /// 运行/暂停中的进度明细行：百分比 · 已下载/总量 · 速度 · 剩余时间
   String? get _progressDetail {
-    if (!task.isRunning) return null;
+    if (!task.isActive) return null;
     if (task.totalBytes > 0) {
       final parts = <String>[
         '${((task.currentBytes / task.totalBytes) * 100).clamp(0, 100).toStringAsFixed(1)}%',
         '${_fmtBytes(task.currentBytes)} / ${_fmtBytes(task.totalBytes)}',
       ];
-      if (task.speedBytes > 0) parts.add('${_fmtBytes(task.speedBytes)}/s');
-      if (task.etaSeconds > 0) parts.add('剩余 ${_fmtDuration(task.etaSeconds)}');
+      if (task.isRunning) {
+        if (task.speedBytes > 0) parts.add('${_fmtBytes(task.speedBytes)}/s');
+        if (task.etaSeconds > 0) parts.add('剩余 ${_fmtDuration(task.etaSeconds)}');
+      } else {
+        parts.add('已暂停');
+      }
       return parts.join(' · ');
     }
     if (task.message.isNotEmpty && task.message != task.displayTitle) {
@@ -162,7 +200,9 @@ class _TaskCard extends StatelessWidget {
                   width: 24,
                   height: 24,
                   child: CircularProgressIndicator(strokeWidth: 2.5)),
+              'paused' => const Icon(Icons.pause_circle, color: Colors.orange),
               'success' => const Icon(Icons.check_circle, color: Colors.green),
+              'cancelled' => Icon(Icons.cancel, color: Theme.of(context).disabledColor),
               _ => Icon(Icons.error, color: Theme.of(context).colorScheme.error),
             },
             title: Text(
@@ -209,6 +249,25 @@ class _TaskCard extends StatelessWidget {
               ],
             ),
             trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+              if (task.isRunning) ...[
+                IconButton(
+                  tooltip: '暂停',
+                  icon: const Icon(Icons.pause_circle_outline, size: 22),
+                  onPressed: () => _act(context, 'pause'),
+                ),
+              ],
+              if (task.isPaused)
+                IconButton(
+                  tooltip: '继续',
+                  icon: const Icon(Icons.play_circle_outline, size: 22),
+                  onPressed: () => _act(context, 'resume'),
+                ),
+              if (task.isActive)
+                IconButton(
+                  tooltip: '取消任务',
+                  icon: const Icon(Icons.cancel_outlined, size: 20),
+                  onPressed: () => _act(context, 'cancel'),
+                ),
               if (task.downloadDir.isNotEmpty)
                 IconButton(
                   tooltip: '打开文件位置',
@@ -244,7 +303,9 @@ class _TaskCard extends StatelessWidget {
               Text(
                 switch (task.status) {
                   'running' => '进行中',
+                  'paused' => '已暂停',
                   'success' => '已完成',
+                  'cancelled' => '已取消',
                   _ => '失败',
                 },
                 style: Theme.of(context).textTheme.labelMedium,
@@ -254,7 +315,7 @@ class _TaskCard extends StatelessWidget {
             ]),
             onTap: onToggle,
           ),
-          if (task.isRunning)
+          if (task.isActive)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
               child: Column(
@@ -262,6 +323,7 @@ class _TaskCard extends StatelessWidget {
                 children: [
                   LinearProgressIndicator(
                     value: task.progressValue,
+                    color: task.isPaused ? Theme.of(context).colorScheme.outline : null,
                     backgroundColor:
                         Theme.of(context).colorScheme.surfaceContainerHighest,
                   ),

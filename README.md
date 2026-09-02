@@ -18,15 +18,16 @@
 - **TikTok**：视频、图集、账号发布/喜欢作品批量下载、直播拉流
 - **Bilibili**：视频（含番剧/合集）下载，多清晰度可选
 - **YouTube**：视频下载，多清晰度/格式可选，自动求解 JS 签名挑战（无需额外安装 Node.js/Deno）
-- **图形界面**：粘贴链接即可下载，实时下载进度（速度/剩余时间）、任务管理、按平台区分的 Cookie 状态提示
-- **应用内更新**：一键检查并下载新版本
+- **图形界面**：粘贴链接即可下载，实时下载进度（速度/剩余时间）、任务管理（暂停/继续/取消，暂停后自动断点续传）、按平台区分的 Cookie 状态提示
+- **应用内更新**：一键检查并下载新版本，支持增量补丁包（只下载有变化的文件）
 
 ## 📥 下载安装
 
 前往 [Releases](https://github.com/hoshino-sys/douyin-video-downloader/releases/latest) 下载最新的
 `yexing-video-downloader_v*.zip`，解压后运行 `夜星视频下载器.exe`（或 `启动.bat`）即可。
 
-已安装旧版本时，可在软件内「设置 → 关于 → 检查更新」直接在应用内下载新版本。
+已安装旧版本时，可在软件内「设置 → 关于 → 检查更新」直接在应用内下载新版本；
+从上一版本升级时会自动使用增量补丁包（通常仅几 MB~几十 MB），下载中断后可断点续传。
 
 > 内置 ffmpeg 与 quickjs 运行时，无需额外安装任何依赖；首次使用请按界面提示导入各平台 Cookie。
 
@@ -45,8 +46,9 @@ git clone https://github.com/hoshino-sys/douyin-video-downloader.git
 cd douyin-video-downloader
 pip install -r requirements.txt
 
-# 一键打包（PyInstaller 后端 + Flutter 前端 + 组装发布目录 + 分发包冒烟测试）
-# 需要 vendor/ffmpeg/ffmpeg.exe、ffprobe.exe 与 vendor/qjs/qjs.exe
+# 一键打包（PyInstaller 后端 + Flutter 前端 + 组装发布目录 + 增量补丁 + 分发包冒烟测试）
+# vendor/qjs/qjs.exe 随 git 分发；vendor/ffmpeg/{ffmpeg,ffprobe}.exe 不入 git，
+# 需自行放置（若本机存在旧版发布目录，构建脚本会自动从中恢复）
 D:/Python 3.12/python.exe build_release.py --zip
 ```
 

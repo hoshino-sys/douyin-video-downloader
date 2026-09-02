@@ -202,6 +202,18 @@ class ApiClient {
         .toList();
   }
 
+  /// 任务控制：action 取 pause / resume / cancel。
+  /// 成功返回 null，失败返回原因文本。
+  Future<String?> taskAction(String id, String action) async {
+    try {
+      final r = await post('/api/gui/task/$id/$action', body: const {});
+      if (r['success'] == true) return null;
+      return r['message']?.toString() ?? '操作失败';
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
   Future<bool> openFolder(String path) async {
     try {
       final r = await post('/api/gui/open_folder', body: {'path': path});
